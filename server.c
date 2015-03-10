@@ -3,18 +3,37 @@
  *  File Name........: server.c
  *
  *  Description......:
- *	Creates a program that establishes a passive socket.  The socket 
- *  accepts connection from the client.c program.  While the connection is
- *  open, listen will print the characters that come down the socket.
+ *  The server waits for connections from the peers on the well-known port 7734. The server maintains two data structures: a list with information about the 
+ *  currently active peers and the index of RFCs available at each peer. For simplicity, you will implement both these structures as linked lists; while such
+ *  an implementation is obviously not scalable to very large number of peers and/or RFCs, it will do for this project.
  *
- *  Listen takes a single argument, the port number of the socket.  Choose
- *  a number that isn't assigned.  Invoke the speak.c program with the 
- *  same port number.
+ *  Each item of the linked list of peers contains two elements:
+ *    1. the hostname of the peer (of type string), and
+ *    2. the port number (of type integer) to which the upload server of this peer is listening.
+ *
+ *  
+Each item of the linked list representing the index of RFCs contains these elements:
+ *    • the RFC number (of type integer),
+ *    • the title of the RFC (of type string), and
+ *    • the hostname of the peer containing the RFC (of type string).
+ *
+ *  Note that the index may contain multiple records of a given RFC, one record for each peer that contains the RFC.
+ *  Initially (i.e., when the server starts up), both linked lists are empty (do not contain any records). The linked lists are updated as peers join and leave
+ *  the system. When a peer joins the system, it provides its hostname and upload port to the server (as explained below) and the server creates a new peer
+ *  record and inserts it at the front of the linked list. The peer also provides the server with a list of RFCs that it has. For each RFC, the server creates
+ *  an appropriate record and inserts it at the front of the linked list representing the index.
+ *  When a peer leaves the system (i.e., closes its connection to the server), the server searches both linked lists and removes all records associated with
+ *  this peer. As we mentioned earlier, the server must be able to handle multiple simultaneous connections from peers. To this end, it has a main process that
+ *  initializes the two linked-lists to empty and then listens to the well-known port 7734. When a connection from a peer is received, the main process spawns
+ *  a new process that handles all communication with this peer. In particular, this process receives the information from the peer and updates the peer list    
+ *  and index, and it also returns any information requested by the peer. When the peer closes the connection, this process removes all records associated with
+ *  the peer and then terminates.
  *
  *****************************************************************************/
 
 /*........................ Include Files ....................................*/
 #include <stdio.h>
+#include <stdbool.h>
 #include <sys/types.h>
 #include <sys/socket.h>
 #include <sys/time.h>
@@ -26,7 +45,284 @@
 
 #define LEN 100
 #define BUF_SIZE 200000
+#define WELL_KNOWN_PORT 7734
 
+typedef struct peer {
+	char hostname[LEN];
+	int port;
+} peer;
+
+typedef struct rfc {
+	int number;
+	char title[LEN];
+	char peerHostname[LEN];
+} rfc;
+
+struct peerList {
+	peer item;
+	struct peerList* next;
+};
+
+struct rfcList {
+	rfc item;
+	struct rfcList* next;
+};
+
+struct peerList *peerHead = NULL;
+struct peerList *peerTail = NULL;
+struct rfcList *rfcHead = NULL;
+struct rfcList *rfcTail = NULL;
+
+struct peerList* createPeerList(peer item)
+{
+    printf("\n creating list with headnode [%s]\n",val->item.hostname);
+    struct peerList *ptr = (struct peerList*)malloc(sizeof(struct peerList));
+    if(ptr == NULL)
+    {
+        printf("\n Node creation failed \n");
+        return NULL;
+    }
+    ptr->item = item;
+    ptr->next = NULL;
+
+    peerHead = peerTail = ptr;
+    return ptr;
+}
+struct rfcList* createRfcList(rfc item)
+{
+    printf("\n creating list with headnode as [%d]\n",val->item.number);
+    struct rfcList *ptr = (struct rfcList*)malloc(sizeof(struct rfcList));
+    if(ptr == NULL)
+    {
+        printf("\n Node creation failed \n");
+        return NULL;
+    }
+    ptr->item = item;
+    ptr->next = NULL;
+
+    rfcHead = rfcTail = ptr;
+    return ptr;
+}
+
+struct peerList* addToPeerList(peer item)
+{
+    if(peerHead == NULL)
+    {
+        return (createPeerList(item));
+    }
+
+    struct peerList *ptr = (struct peerList*)malloc(sizeof(struct peerList));
+    if(ptr == NULL)
+    {
+        printf("\n Node creation failed \n");
+        return NULL;
+    }
+    ptr->item = item;
+    ptr->next = NULL;
+
+	// Put it at the end of the linked list
+    peerTail->next = ptr;
+    peerTail = ptr;
+
+    return ptr;
+}
+struct rfcList* addToRfcList(rfc item)
+{
+    if(rfcHead == NULL)
+    {
+        return (createRfcList(item));
+    }
+
+    struct rfcList *ptr = (struct rfcList*)malloc(sizeof(struct rfcList));
+    if(ptr == NULL)
+    {
+        printf("\n Node creation failed \n");
+        return NULL;
+    }
+    ptr->item = item;
+    ptr->next = NULL;
+
+	// Put it at the end of the linked list
+    rfcTail->next = ptr;
+    rfcTail = ptr;
+
+    return ptr;
+}
+
+struct peerList* searchInPeerList(char* host, peerList** prev)
+{
+    struct peerList *ptr = peerHead;
+    struct peerList *tmp = NULL;
+    bool found = false;
+
+    printf("\n Searching the list for value [%s] \n", host);
+
+    while(ptr != NULL)
+    {
+        if(strcmp(ptr->item.hostname, host) == 0)
+        {
+            found = true;
+            break;
+        }
+        else
+        {
+            tmp = ptr;
+            ptr = ptr->next;
+        }
+    }
+
+    if(found == true)
+    {
+    	// save previous in case we need to delete the last item
+        if(prev)
+            *prev = tmp;
+        return ptr;
+    }
+    else
+    {
+        return NULL;
+    }
+}
+struct rfcList* searchInRfcList(int rfcNum, rfcList** prev)
+{
+    struct rfcList *ptr = rfcHead;
+    struct rfcList *tmp = NULL;
+    bool found = false;
+
+    printf("\n Searching the list for value [%d] \n", rfcNum);
+
+    while(ptr != NULL)
+    {
+        if(ptr->item.number == rfcNum)
+        {
+            found = true;
+            break;
+        }
+        else
+        {
+            tmp = ptr;
+            ptr = ptr->next;
+        }
+    }
+
+    if(found == true)
+    {
+    	// save previous in case we need to delete the last item
+        if(prev)
+            *prev = tmp;
+        return ptr;
+    }
+    else
+    {
+        return NULL;
+    }
+}
+struct rfcList* searchPeerInRfcList(char* host, rfcList** prev)
+{
+    struct rfcList *ptr = rfcHead;
+    struct rfcList *tmp = NULL;
+    bool found = false;
+
+    printf("\n Searching the list for value [%s] \n", host);
+
+    while(ptr != NULL)
+    {
+        if(strcmp(ptr->item.peerHostname, host) == 0)
+        {
+            found = true;
+            break;
+        }
+        else
+        {
+            tmp = ptr;
+            ptr = ptr->next;
+        }
+    }
+
+    if(found == true)
+    {
+    	// save previous in case we need to delete the last item
+        if(prev)
+            *prev = tmp;
+        return ptr;
+    }
+    else
+    {
+        return NULL;
+    }
+}
+
+int deleteFromPeerList(char* host)
+{
+    struct peerList *prev = NULL;
+    struct peerList *del = NULL;
+
+    printf("\n Deleting value [%s] from list\n", host);
+
+    del = searchInPeerList(host, &prev);
+    if(del == NULL)
+    {
+        return -1;
+    }
+    else
+    {
+        if(prev != NULL)
+            prev->next = del->next;
+
+        if(del == peerTail)
+        {
+            peerTail = prev;
+        }
+        else if(del == peerHead)
+        {
+            peerHead = del->next;
+        }
+    }
+
+    free(del);
+    del = NULL;
+
+    return 0;
+}
+// This function will cycle through the rfcList and delete ALL items
+// with the peerHostname of 'host'
+int deletePeerFromRfcList(char* host)
+{
+    struct rfcList *prev = NULL;
+    struct rfcList *del = NULL;
+    bool found = false;
+
+    printf("\n Deleting all values [%s] from list\n", host);
+
+    del = searchPeerInRfcList(host, &prev);
+    while (del != NULL)
+    {
+    	found = true;
+
+        if(prev != NULL)
+            prev->next = del->next;
+
+        if(del == rfcTail)
+        {
+            rfcTail = prev;
+        }
+        else if(del == rfcHead)
+        {
+            rfcHead = del->next;
+        }
+        free(del);
+        del = searchPeerInRfcList(host, &prev);
+    }
+
+    if(found == false)
+    {
+        return -1;
+    }
+	else
+	{
+    	return 0;
+    }
+}
 
 typedef struct playerInfo {
     char host[LEN];
@@ -88,41 +384,11 @@ main (int argc, void *argv[])
     struct timeval tv;
     int on=1;
 
-	srand(time(NULL));
-    
     memset(&sin, 0, sizeof(sin));
     memset(&incoming, 0, sizeof(incoming));
     memset(&potato, 0, sizeof(potato));
     
-    /* read port number, number of players, and hops from command line */
-    if ( argc != 4 ) {
-        fprintf(stderr, "Usage: %s <port-number> <number-of-players> <hops>\n", argv[0]);
-        exit(1);
-    }
-    if (!isNumeric(argv[1])) {
-        fprintf(stderr, "Port number must be within range 0-65535\n");
-        exit(1);
-    }
-    port = atoi(argv[1]);
-    if ( port < 0 || port > 65535 ) {
-        fprintf(stderr, "Port number must be within range 0-65535\n");
-    }
-    if (!isNumeric(argv[2]) || !isNumeric(argv[3])) {
-        fprintf(stderr, "Invalid arguments!\n");
-        exit(1);
-    }
-    numPlayers = atoi(argv[2]);
-    numHops = atoi(argv[3]);
-    if (numPlayers < 2) {
-        fprintf(stderr, "Must have 2 or more players\n");
-        exit(1);
-    }
-    if (numHops < 0) {
-        fprintf(stderr, "Must have 0 or more hops\n");
-        exit(1);        
-    }
-    
-    playerInfo playerData[numPlayers];
+    port = WELL_KNOWN_PORT;
     
     /* fill in hostent struct for self */
     gethostname(host, sizeof host);
@@ -131,9 +397,6 @@ main (int argc, void *argv[])
         fprintf(stderr, "%s: host not found (%s)\n", argv[0], host);
         exit(1);
     }
-    printf("Potato Master on %s\n", host);
-    printf("Players = %d\n", numPlayers);
-    printf("Hops = %d\n", numHops);
     
     /* open a socket for listening
      * 4 steps:
@@ -143,7 +406,6 @@ main (int argc, void *argv[])
      *	4. accept a connection
      */
     
-
     /* use address family INET and STREAMing sockets (TCP) */
     s = socket(AF_INET, SOCK_STREAM, 0);
     if ( s < 0 ) {
