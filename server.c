@@ -66,12 +66,12 @@ typedef struct rfc {
 } rfc;
 
 typedef struct peerList {
-	peer item;
+	peer* item;
 	struct peerList* next;
 } peerList;
 
 typedef struct rfcList {
-	rfc item;
+	rfc* item;
 	struct rfcList* next;
 } rfcList;
 
@@ -85,10 +85,10 @@ fd_set readset;               // Set of sockets to 'select' on
 int listenSocket;             // Socket to listen for incoming connections
 int maxfd;                    // highest number socket for 'select'
 
-struct peerList* createPeerList(peer item)
+struct peerList* createPeerList(peer* item)
 {
 	DEBUG("createPeerList()\n");
-    printf("creating list with headnode [%s]\n",item.hostname);
+    printf("   creating list with headnode [%s]\n",item->hostname);
     struct peerList *ptr = (struct peerList*)malloc(sizeof(struct peerList));
     if(ptr == NULL)
     {
@@ -101,10 +101,10 @@ struct peerList* createPeerList(peer item)
     peerHead = peerTail = ptr;
     return ptr;
 }
-struct rfcList* createRfcList(rfc item)
+struct rfcList* createRfcList(rfc* item)
 {
 	DEBUG("createRfcList()\n");
-    printf("creating list with headnode as [%d]\n",item.number);
+    printf("   creating list with headnode as [%d]\n",item->number);
     struct rfcList *ptr = (struct rfcList*)malloc(sizeof(struct rfcList));
     if(ptr == NULL)
     {
@@ -118,7 +118,7 @@ struct rfcList* createRfcList(rfc item)
     return ptr;
 }
 
-struct peerList* addToPeerList(peer item)
+struct peerList* addToPeerList(peer* item)
 {
 	DEBUG("addToPeerList()\n");
     if(peerHead == NULL)
@@ -141,7 +141,7 @@ struct peerList* addToPeerList(peer item)
 
     return ptr;
 }
-struct rfcList* addToRfcList(rfc item)
+struct rfcList* addToRfcList(rfc* item)
 {
 	DEBUG("addToRfcList()\n");
     if(rfcHead == NULL)
@@ -170,14 +170,15 @@ struct peerList* searchInPeerList(char* host, peerList** prev)
     struct peerList *ptr = peerHead;
     struct peerList *tmp = NULL;
     bool found = false;
-    DEBUG("searchInPeerList()");
+    DEBUG("searchInPeerList()\n");
 
-    printf("Searching the list for value [%s] \n", host);
+    DEBUG("   Searching the list for value [%s] \n", host);
 
     while(ptr != NULL)
     {
-        if(strcmp(ptr->item.hostname, host) == 0)
+        if(strcmp(ptr->item->hostname, host) == 0)
         {
+        	DEBUG("      Found peer in peerList\n");
             found = true;
             break;
         }
@@ -207,12 +208,13 @@ struct rfcList* searchInRfcList(int rfcNum, rfcList** prev)
     bool found = false;
     DEBUG("searchInRfcList()\n");
 
-    printf("Searching the list for value [%d] \n", rfcNum);
+    DEBUG("   Searching the list for value [%d] \n", rfcNum);
 
     while(ptr != NULL)
     {
-        if(ptr->item.number == rfcNum)
+        if(ptr->item->number == rfcNum)
         {
+        	DEBUG("      Found rfc in rfcList\n");
             found = true;
             break;
         }
@@ -246,7 +248,7 @@ struct rfcList* searchPeerInRfcList(char* host, rfcList** prev)
 
     while(ptr != NULL)
     {
-        if(strcmp(ptr->item.peerHostname, host) == 0)
+        if(strcmp(ptr->item->peerHostname, host) == 0)
         {
             found = true;
             break;
@@ -282,7 +284,7 @@ struct peerList* findPeerBySocket(int peerSocket)
 
     while(ptr != NULL)
     {
-        if(ptr->item.socket == peerSocket)
+        if(ptr->item->socket == peerSocket)
         {
             found = true;
             break;
@@ -309,7 +311,7 @@ int deleteFromPeerList(char* host)
     struct peerList *del = NULL;
     DEBUG("deleteFromPeerList()\n");
 
-    printf("Deleting value [%s] from list\n", host);
+    printf("   Deleting value [%s] from list\n", host);
 
     del = searchInPeerList(host, &prev);
     if(del == NULL)
@@ -318,19 +320,26 @@ int deleteFromPeerList(char* host)
     }
     else
     {
-        if(prev != NULL)
+    	DEBUG("      Found peer to delete\n");
+        if(prev != NULL) {
+        	DEBUG("         Found a previous item in list\n");
             prev->next = del->next;
+        }
 
         if(del == peerTail)
         {
+        	DEBUG("         Deleting Tail\n");
             peerTail = prev;
         }
-        else if(del == peerHead)
+        
+        if(del == peerHead)
         {
+        	DEBUG("         Deleting Head\n");
             peerHead = del->next;
         }
     }
 
+	free(del->item);
     free(del);
     del = NULL;
 
@@ -345,11 +354,12 @@ int deletePeerFromRfcList(char* host)
     bool found = false;
     DEBUG("deletePeerFromRfcList()\n");
 
-    printf("Deleting all values [%s] from list\n", host);
+    printf("   Deleting all values [%s] from list\n", host);
 
     del = searchPeerInRfcList(host, &prev);
     while (del != NULL)
     {
+    	DEBUG("      Found RFC to delete\n");
     	found = true;
 
         if(prev != NULL)
@@ -363,6 +373,7 @@ int deletePeerFromRfcList(char* host)
         {
             rfcHead = del->next;
         }
+        free(del->item);
         free(del);
         del = searchPeerInRfcList(host, &prev);
     }
@@ -376,13 +387,6 @@ int deletePeerFromRfcList(char* host)
     	return 0;
     }
 }
-
-typedef struct playerInfo {
-    char host[LEN];
-    int playerSocket;
-    struct sockaddr_in playerSin;
-    struct sockaddr_in playerIncoming;
-} playerInfo;
 
 int isNumeric(char* String) {
     char* ptr = String;
@@ -403,7 +407,7 @@ int setSocketBlockingEnabled(int fd, int blocking)
 	return (fcntl(fd, F_SETFL, flags) == 0) ? 1 : 0;
 }
 
-void closeAllSockets(int s, playerInfo playerData[], int numPlayers) {
+/*void closeAllSockets(int s, playerInfo playerData[], int numPlayers) {
     char str[LEN];
 	int len;
 	DEBUG("closeAllSockets()\n");
@@ -424,7 +428,7 @@ void closeAllSockets(int s, playerInfo playerData[], int numPlayers) {
         }
         close(s);
     }
-}
+}*/
 
 void handleClientDisconnect(int clientNum)
 {
@@ -434,16 +438,16 @@ void handleClientDisconnect(int clientNum)
 	tmpList = findPeerBySocket(clientNum);
 	if (tmpList != NULL) {
 		// Delete all of the disconnected peer's rfc data
-		deletePeerFromRfcList(tmpList->item.hostname);
+		deletePeerFromRfcList(tmpList->item->hostname);
 		// Now remove it from the list of connected peers
-		deleteFromPeerList(tmpList->item.hostname);
+		deleteFromPeerList(tmpList->item->hostname);
 		// Then close the connection to the peer
 		close(clientList[clientNum]);
 		// And remove it from the client list
 		clientList[clientNum] = 0;
 	}
 	else {
-		printf("ERROR: Client not found!\n");
+		printf("   ERROR: Client not found!\n");
 	}
 }
 
@@ -455,11 +459,14 @@ void updateSelectList()
 	DEBUG("updateSelectList()\n");
 	FD_ZERO(&readset);
 	FD_SET(listenSocket, &readset);
+	maxfd = listenSocket;
 	
 	for (i = 0; i < MAX_CLIENTS; i++) {
 		if (clientList[i] != 0) {
+			DEBUG("   Adding socket %d in position %d\n", clientList[i], i);
 			FD_SET(clientList[i], &readset);
 			maxfd = (clientList[i] > maxfd) ? clientList[i] : maxfd;
+			DEBUG("   maxfd = %d\n", maxfd);
 		}
 	}
 }
@@ -503,18 +510,17 @@ void add(char* data, int clientNum)
 	struct rfc* newRfc = (struct rfc*)malloc(sizeof(struct rfc));
 	DEBUG("add()\n");
 
-	rfcNumString = getTagValue(data, "RFC");    DEBUG("RFC = %s\n", rfcNumString);
-	host         = getTagValue(data, "Host:");  DEBUG("Host = %s\n", rfcNumString);
-	portString   = getTagValue(data, "Port:");  DEBUG("Port = %s\n", rfcNumString);
-	title        = getTagValue(data, "Title:"); DEBUG("Title = %s\n", rfcNumString);
+	rfcNumString = getTagValue(data, "RFC");    DEBUG("   RFC = %s\n", rfcNumString);
+	host         = getTagValue(data, "Host:");  DEBUG("   Host = %s\n", rfcNumString);
+	portString   = getTagValue(data, "Port:");  DEBUG("   Port = %s\n", rfcNumString);
+	title        = getTagValue(data, "Title:"); DEBUG("   Title = %s\n", rfcNumString);
 	
 	newRfc->number = atoi(rfcNumString);
 	newRfc->port   = atoi(portString);
 	strcpy(newRfc->peerHostname, host);
 	strcpy(newRfc->title, title);
 	
-	addToRfcList(*newRfc);
-	
+	addToRfcList(newRfc);
 }
 
 void lookup(char* data, int clientNum)
@@ -527,29 +533,79 @@ void list(char* data, int clientNum)
 
 void handleNewClient()
 {
-	int i;
+	int i, len;
+	int socketSaved = 0;
 	int newSocket; /* Socket file descriptor for incoming connections */
 
+	DEBUG("handleNewClient()\n");
 	// New client is connecting. Look for a spot in the clientList
 	newSocket = accept(listenSocket, NULL, NULL);
 	if (newSocket < 0) {
 		perror("accept");
 		exit(listenSocket);
 	}
-	setSocketBlockingEnabled(newSocket, 0);
-	for (i = 0; (i < MAX_CLIENTS) && (newSocket != -1); i++)
+	for (i = 0; (i < MAX_CLIENTS) && (socketSaved == 0); i++) {
 		if (clientList[i] == 0) {
-			DEBUG("Client accepted:   FD=%d; index=%d\n", newSocket, i);
+			DEBUG("   Client accepted:   FD=%d; index=%d\n", newSocket, i);
 			clientList[i] = newSocket;
 			// Create a new peer, save data, and add to peerList
-			newSocket = -1;
+			socketSaved = 1;
 		}
-	if (newSocket != -1)
+	}
+	if (socketSaved != 1)
 	{
 		// Our array is full
-		printf("No space left for new client!\n");
+		printf("   No space left for new client!\n");
 		close(newSocket);
+		return;
 	}
+	
+	char buf[LEN];
+	memset(&buf, 0, sizeof(buf));
+	// Peer is going to send it's hostname and port number after connection
+    struct peer* newPeer = (struct peer*)malloc(sizeof(struct peer));
+	memset(newPeer, 0, sizeof(struct peer));
+	//len = recv(newSocket, newPeer->hostname, LEN, 0);
+	len = recv(newSocket, buf, LEN-1, 0);
+	if ( len < 0 ) {
+		perror("recv");
+		exit(1);
+	}
+	memcpy(&newPeer->hostname[0], &buf, len);
+	newPeer->hostname[strlen(buf)] = '\0';
+	DEBUG("   Received host [%s]\n", newPeer->hostname);
+	
+	// Send Ack
+	char str[2];  // Ack string
+	str[0] = 'A';
+    str[1] = '\0';
+    len = send(newSocket, str, strlen(str), 0);
+    if ( len != strlen(str) ) {
+        perror("send");
+        exit(1);
+    }
+
+	// Receive port number
+	int32_t ret;
+	len = recv(newSocket, &ret, sizeof(ret), 0);
+    if ( len < 0 ) {
+        perror("recv");
+        exit(1);
+    }
+	newPeer->port = ntohl(ret);
+	DEBUG("   Received port [%d]\n", newPeer->port);
+
+	// Send Ack
+    len = send(newSocket, str, strlen(str), 0);
+    if ( len != strlen(str) ) {
+        perror("send");
+        exit(1);
+    }
+    
+    // Add the new peer to the peerList
+    addToPeerList(newPeer);
+	
+	setSocketBlockingEnabled(newSocket, 0);
 }
 
 void handleData(int clientNum) 
@@ -558,6 +614,7 @@ void handleData(int clientNum)
 	char data[MAX_MSG_SIZE];
 	int j, len, totalLen = 0;
 	
+	DEBUG("handleData() from client %d\n", clientNum);
 	memset(&data, '\0', MAX_MSG_SIZE);
 	
     while (1)
@@ -568,8 +625,9 @@ void handleData(int clientNum)
         err = errno; // save off errno
         //printf("Debug: recv = %d", len);
         if ( len < 0 ) {
+        	totalLen = 0;
             if (( err == EAGAIN ) || (err == EWOULDBLOCK)) { // No more data
-                printf("DEBUG: Data received -\n   [%s]\n", data);
+                printf("   DEBUG: Data received -\n   [%s]\n", data);
                 // Check to see which command was received
                 // Valid methods: ADD, LOOKUP, LIST
                 if (data[0] == 'A' && data[1] == 'D' && data[2] == 'D') {
@@ -579,7 +637,7 @@ void handleData(int clientNum)
                 } else if (data[0] == 'L' && data[1] == 'I' && data[2] == 'S') {
                 	list(&data, clientNum);
                 } else {
-                	printf("ERROR: Invalid command\n");
+                	printf("   ERROR: Invalid command - %s\n", data);
                 }
 				return;
             }
@@ -587,14 +645,14 @@ void handleData(int clientNum)
         }
         else if (len == 0) {
             // We got a close
-            printf("Debug: Close from client %d\n", clientNum);
+            printf("   Debug: Close from client %d\n", clientNum);
             handleClientDisconnect(clientNum);
             break;
         }
         else {
             memcpy(&data[totalLen], &buf, len);
             totalLen += len;
-            //printf(" len[%d]\n", totalLen);
+            DEBUG("   Received [%s]\n", buf);
         }
     } // while
 
@@ -605,6 +663,7 @@ void handleData(int clientNum)
 void handleSocketRead() {
 	int i;
 	
+	DEBUG("handleSocketRead()\n");
 	// See if a new client is trying to connect to the listening socket
 	if (FD_ISSET(listenSocket, &readset))
 		handleNewClient();
@@ -635,8 +694,9 @@ main (int argc, void *argv[])
     port = WELL_KNOWN_PORT;
     
     /* fill in hostent struct for self */
-    gethostname(host, sizeof host);
+    gethostname(host, sizeof(host));
     hp = gethostbyname(host);
+    DEBUG("Hostname: %s\n", host);
     if ( hp == NULL ) {
         fprintf(stderr, "%s: host not found (%s)\n", argv[0], host);
         exit(1);
@@ -667,6 +727,8 @@ main (int argc, void *argv[])
 		exit (-1);
 	}
 	
+	setSocketBlockingEnabled(listenSocket, 0);
+	
     /* set up the address and port */
     sin.sin_family = AF_INET;
     sin.sin_port = htons(port);
@@ -694,7 +756,7 @@ main (int argc, void *argv[])
     
     while (1) {
     	updateSelectList();
-    	tv.tv_sec = 30;
+    	tv.tv_sec = 10;
         tv.tv_usec = 0;
         
         // select() returns the number of sockets that are ready for reading
@@ -706,7 +768,7 @@ main (int argc, void *argv[])
             perror("select");
             exit(1);
         }
-        else if (result > 0) {
+        else {
         	handleSocketRead();
         }
     }

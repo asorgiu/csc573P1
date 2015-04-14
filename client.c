@@ -3,12 +3,16 @@
  *  File Name........: client.c
  *
  *  Description......:
- *	Create a process that talks to the server.c program.  After 
- *  connecting, each line of input is sent to listen.
- *
- *  This program takes two arguments.  The first is the host name on which
- *  the listen process is running. (Note: listen must be started first.)
- *  The second is the port number on which listen is accepting connections.
+ *	When a peer wishes to join the system, it first instantiates an upload server 
+ *  process listening to any available local port. It then creates a connection to
+ *  the server at the well-known port 7734 and passes information about itself and
+ *  its RFCs to the server, as we describe shortly. It keeps this connection open
+ *  until it leaves the system. The peer may send requests to the server over this
+ *  open connection and receive responses (e.g., the hostname and upload port of a
+ *  server containing a particular RFC). When it wishes to download an RFC, it opens
+ *  a connection to a remote peer at the specified upload port, requests the RFC,
+ *  receives the file and stores it locally, and the closes this download connection
+ *  to the peer.
  *
  *
  *****************************************************************************/
@@ -25,6 +29,10 @@
 
 #define LEN	100
 #define BUF_SIZE 200000
+#define SERVER_PORT 7734
+#define PEER_PORT 7735
+#define DEBUG printf
+//#define DEBUG //
 
 /** Returns 1 on success, or 0 if there was an error */
 int setSocketBlockingEnabled(int fd, int blocking)
@@ -52,23 +60,6 @@ int process_buffer(unsigned char *potato, size_t *len)
     return 1;
 }
 
-// Compensating for storing player numbers 1, 2, 3... while reporting them as 0, 1, 2...
-int getLeftPlayer(int thisPlayer, int numPlayers)
-{
-	if (thisPlayer == 1)
-		return numPlayers-1;
-	else
-		return thisPlayer-2;
-}
-
-int getRightPlayer(int thisPlayer, int numPlayers)
-{
-	if (thisPlayer == numPlayers)
-		return 0;
-	else
-		return thisPlayer;
-}
-
 
 void sendPotato(char* outgoing, int s)
 {
@@ -83,159 +74,201 @@ void sendPotato(char* outgoing, int s)
 
 main (int argc, void *argv[])
 {
-    int s, rc, len, port, iPlayer, numHops, numPlayers, sLeft, sRight, sLeftIncoming, maxfd, result, i;
+    int serverSocket, rc, len, serverPort, peerPort, incomingSocket, maxfd, result, i;
     char host[LEN], str[LEN], buf[LEN], hostRight[LEN];
     char potato[BUF_SIZE];
     size_t recv_len = 0;
-    struct hostent *hp, *hpRight, *hpLeft;
-    struct sockaddr_in sin, sinRight, sinLeft, sinLeftIncoming;
+    struct hostent *pHostentServer, *pHostentIncoming;
+    struct sockaddr_in sinServer, sinIncoming;
     fd_set readset, tempset;
     struct timeval tv;
     int on=1;
 
 	srand(time(NULL));
     
-    memset(&sin, 0, sizeof(sin));
-    memset(&potato, 0, sizeof(potato));
+    memset(&sinServer, 0, sizeof(sinServer));
+    memset(&sinIncoming, 0, sizeof(sinIncoming));
+    memset(&host, 0, sizeof(host));
     
     /* read host and port number from command line */
-    if ( argc != 3 ) {
-        fprintf(stderr, "Usage: %s <master-machine-name> <port-number>\n", argv[0]);
+    if ( argc != 2 ) {
+        fprintf(stderr, "Usage: %s <server-machine-name>\n", argv[0]);
         exit(1);
     }
     
-    /* fill in hostent struct */
-    hp = gethostbyname(argv[1]); 
-    if ( hp == NULL ) {
-        fprintf(stderr, "%s: host not found (%s)\n", argv[0], argv[1]);
-        exit(1);
-    }
-    port = atoi(argv[2]);
+    	DEBUG("Debug: Create server socket\n");
+    	incomingSocket = socket(AF_INET, SOCK_STREAM, 0);
+    	if ( incomingSocket < 0 ) {
+        	perror("socket:");
+        	exit(incomingSocket);
+    	}
     
-    /* create and connect to a socket */
+   		if((rc = setsockopt(incomingSocket, SOL_SOCKET, SO_REUSEADDR, (char *)&on, sizeof(on))) < 0)
+		{
+			perror("setsockopt() error");
+			close(incomingSocket);
+			exit (-1);
+		}
     
-    /* use address family INET and STREAMing sockets (TCP) */
-    s = socket(AF_INET, SOCK_STREAM, 0);
-    if ( s < 0 ) {
-        perror("socket:");
-        exit(s);
-    }
-    
-    // The setsockopt() function is used so the local address
-    // can be reused when the server is restarted before the required
-    // wait time expires
-	if((rc = setsockopt(s, SOL_SOCKET, SO_REUSEADDR, (char *)&on, sizeof(on))) < 0)
-	{
-		perror("setsockopt() error");
-		close(s);
-		exit (-1);
-	}
-
-    /* set up the address and port */
-    sin.sin_family = AF_INET;
-    sin.sin_port = htons(port);
-    memcpy(&sin.sin_addr, hp->h_addr_list[0], hp->h_length);
-    
-    /* connect to socket at above addr and port */
-    rc = connect(s, (struct sockaddr *)&sin, sizeof(sin));
-    if ( rc < 0 ) {
-        perror("connect:");
-        exit(rc);
-    }
-    
-    // Get our info from the Master
-    memset(&buf, 0, LEN);
-    len = recv(s, buf, 32, 0);
-    if ( len < 0 ) {
-        perror("recv");
-        exit(1);
-    }
-    buf[len] = '\0';
-    iPlayer = atoi(buf);
-    str[0] = 'A';
-    str[1] = '\0';
-    len = send(s, str, strlen(str), 0);
-    if ( len != strlen(str) ) {
-        perror("send");
-        exit(1);
-    }
-    
-    memset(&buf, 0, LEN);
-    len = recv(s, buf, 32, 0);
-    if ( len < 0 ) {
-        perror("recv");
-        exit(1);
-    }
-    buf[len] = '\0';
-    numPlayers = atoi(buf);
-    len = send(s, str, strlen(str), 0);
-    if ( len != strlen(str) ) {
-        perror("send");
-        exit(1);
-    }
-
-    memset(&buf, 0, LEN);
-    len = recv(s, buf, 32, 0);
-    if ( len < 0 ) {
-        perror("recv");
-        exit(1);
-    }
-    buf[len] = '\0';
-    numHops = atoi(buf);
-    len = send(s, str, strlen(str), 0);
-    if ( len != strlen(str) ) {
-        perror("send");
-        exit(1);
-    }
-
-    // Create server socket for player on the left to connect to
-    /* use address family INET and STREAMing sockets (TCP) */
-    //printf("Debug: Create server socket\n");
-    sLeftIncoming = socket(AF_INET, SOCK_STREAM, 0);
-    if ( sLeftIncoming < 0 ) {
-        perror("socket:");
-        exit(sLeftIncoming);
-    }
-    
-   	if((rc = setsockopt(sLeftIncoming, SOL_SOCKET, SO_REUSEADDR, (char *)&on, sizeof(on))) < 0)
-	{
-		perror("setsockopt() error");
-		close(s);
-		exit (-1);
-	}
+    	/* fill in hostent struct for self */
+    	gethostname(host, sizeof(host));
+    	pHostentIncoming = gethostbyname(host);
+    	DEBUG("Hostname: %s\n", host);
+    	if ( pHostentIncoming == NULL ) {
+        	fprintf(stderr, "%s: host not found (%s)\n", argv[0], host);
+        	exit(1);
+    	}
 
     
-    /* fill in hostent struct for self */
-    gethostname(host, sizeof host);
-    hpLeft = gethostbyname(host);
-    if ( hpLeft == NULL ) {
-        fprintf(stderr, "%s: host not found (%s)\n", argv[0], host);
-        exit(1);
-    }
-
+    	/* set up the address and port */
+    	peerPort = PEER_PORT;
+    	sinIncoming.sin_family = AF_INET;
+    	sinIncoming.sin_port = htons(peerPort);
+    	memcpy(&sinIncoming.sin_addr, pHostentIncoming->h_addr_list[0], pHostentIncoming->h_length);
     
-    /* set up the address and port */
-    memset(&sinLeftIncoming, 0, sizeof(sinLeftIncoming)); 
-    sinLeftIncoming.sin_family = AF_INET;
-    sinLeftIncoming.sin_port = htons(port+iPlayer);
-    memcpy(&sinLeftIncoming.sin_addr, hpLeft->h_addr_list[0], hpLeft->h_length);
+    	/* bind socket incomingSocket to address sinIncoming */
+    	// If port is in use, try the next one
+    	do {
+    		rc = bind(incomingSocket, (struct sockaddr *)&sinIncoming, sizeof(sinIncoming));
+    		if (rc < 0) {
+    			perror("bind:");
+    			peerPort++;
+    			sinIncoming.sin_port = htons(peerPort);
+    		}
+    	} while ( (rc < 0) && (peerPort < 8500) );
+    	
+    	if ( rc < 0 ) {
+    		perror("bind:");
+    		printf("Fatal Error! Unable to bind to any port below 8500\n");
+    		exit(rc);
+    	}
     
-    /* bind socket s to address sin */
-    rc = bind(sLeftIncoming, (struct sockaddr *)&sinLeftIncoming, sizeof(sinLeftIncoming));
-    if ( rc < 0 ) {
-        perror("bind:");
-        exit(rc);
-    }
+    /* 
+     *  Fork to create:
+     *    Child process - Server socket to accept incoming peer download requests
+     *    Parent process - Connect to server and communicate with it
+     */
     
-    rc = listen(sLeftIncoming, 5);
-    if ( rc < 0 ) {
-        perror("listen:");
-        exit(rc);
-    }
+//    pid_t child_pid = fork(); 
+/*    if (child_pid == 0) {  // child - create a server socket for peer downloads
+    	rc = listen(incomingSocket, 5);
+    	if ( rc < 0 ) {
+        	perror("listen:");
+        	exit(rc);
+    	}
         
-    printf("Connected as player %d\n", iPlayer-1);
+    	DEBUG("Someone connected for download!\n");
+    	// Do download stuff here
+    	
+    	while(1) {
+    		sleep(10); // send and do stuff here!
+    	}
+    	DEBUG("Child should not be exiting!\n");
+    }
+    else if (child_pid > 0) { // parent - connecting to server socket
+*/    	/* fill in hostent struct */
+    	close(incomingSocket);
+    	pHostentServer = gethostbyname(argv[1]); 
+    	if ( pHostentServer == NULL ) {
+        	fprintf(stderr, "%s: host not found (%s)\n", argv[0], argv[1]);
+        	exit(1);
+    	}
     
+    	/* create and connect to a socket */
     
+    	/* use address family INET and STREAMing sockets (TCP) */
+    	serverSocket = socket(AF_INET, SOCK_STREAM, 0);
+    	if ( serverSocket < 0 ) {
+        	perror("socket:");
+        	exit(serverSocket);
+    	}
+    
+    	// The setsockopt() function is used so the local address
+    	// can be reused when the server is restarted before the required
+    	// wait time expires
+		if((rc = setsockopt(serverSocket, SOL_SOCKET, SO_REUSEADDR, (char *)&on, sizeof(on))) < 0)
+		{
+			perror("setsockopt() error");
+			close(serverSocket);
+			exit (-1);
+		}
+
+    	// set up the address and port
+    	serverPort = SERVER_PORT;
+    	sinServer.sin_family = AF_INET;
+    	sinServer.sin_port = htons(serverPort);
+    	memcpy(&sinServer.sin_addr, pHostentServer->h_addr_list[0], pHostentServer->h_length);
+    
+    	// connect to socket at above addr and port
+    	rc = connect(serverSocket, (struct sockaddr *)&sinServer, sizeof(sinServer));
+    	if ( rc < 0 ) {
+        	perror("connect:");
+        	exit(rc);
+    	}
+    
+    	// Send the server our hostname and listening port so it can let
+    	// other peers know how to connect to us
+    	len = send(serverSocket, host, strlen(host), 0);
+    	if (len != strlen(host)) {
+    		perror("send");
+    		exit(1);
+    	}
+    	DEBUG("Sent host: %s\n", host);
+    	
+    	// Wait for Ack
+    	len = recv(serverSocket, buf, sizeof(buf)-1, 0);
+    	if (len < 0) {
+    		perror("recv:");
+    	}
+    	DEBUG("  Ack\n");
+    	
+    	//sleep(3);
+    	//DEBUG("Wake\n");
+    	// Send port number
+    	int32_t conv = htonl(peerPort);
+    	//char *portString = (char*)&conv;
+    	//len = send(serverSocket, portString, sizeof(conv), 0);
+    	len = send(serverSocket, &conv, sizeof(conv), 0);
+    	if (len != sizeof(conv)) {
+    		perror("send");
+    		exit(1);
+    	}
+    	DEBUG("Sent port: %d\n", peerPort);
+    	
+    	// Wait for Ack
+    	len = recv(serverSocket, buf, sizeof(buf)-1, 0);
+    	if (len < 0) {
+    		perror("recv:");
+    	}
+    	DEBUG("   Ack\n");
+    	
+    	while(1) {
+    		sleep(10); // send and do stuff here!
+    	}
+    	DEBUG("Parent should not be exiting!\n");
+    	
+/*    	memset(&buf, 0, LEN);
+    	len = recv(serverSocket, buf, 32, 0);
+    	if ( len < 0 ) {
+        	perror("recv");
+        	exit(1);
+    	}
+    	buf[len] = '\0';
+    	iPlayer = atoi(buf);
+    	str[0] = 'A';
+    	str[1] = '\0';
+    	len = send(serverSocket, str, strlen(str), 0);
+    	if ( len != strlen(str) ) {
+        	perror("send");
+        	exit(1);
+    	}
+*/
+//    }
+//    else { // error forking
+//        printf("ERROR:  Could not fork a new process!\n");
+//    }
+
+/*
     // Get host name of player to our right from host
     // This also signals us to start creating the ring of connections between players
     memset(&hostRight, 0, LEN);
@@ -284,7 +317,7 @@ main (int argc, void *argv[])
         	exit(sLeft);
     	}
     
-    	/* set up the address and port */
+    	// set up the address and port
     	memset(&sinRight, 0, sizeof(sinRight)); 
     	sinRight.sin_family = AF_INET;
     	if (iPlayer == numPlayers) {
@@ -294,7 +327,7 @@ main (int argc, void *argv[])
     	}
     	memcpy(&sinRight.sin_addr, hpRight->h_addr_list[0], hpRight->h_length);
     
-    	/* connect to socket at above addr and port */
+    	// connect to socket at above addr and port
     	rc = connect(sRight, (struct sockaddr *)&sinRight, sizeof(sinRight));
     	if ( rc < 0 ) {
         	perror("connect:");
@@ -310,13 +343,13 @@ main (int argc, void *argv[])
         	exit(sLeft);
     	}
     
-    	/* set up the address and port */
+    	// set up the address and port
     	memset(&sinRight, 0, sizeof(sinRight)); 
     	sinRight.sin_family = AF_INET;
         sinRight.sin_port = htons(port+1);
     	memcpy(&sinRight.sin_addr, hpRight->h_addr_list[0], hpRight->h_length);
     
-    	/* connect to socket at above addr and port */
+    	// connect to socket at above addr and port
     	rc = connect(sRight, (struct sockaddr *)&sinRight, sizeof(sinRight));
     	if ( rc < 0 ) {
         	perror("connect:");
@@ -555,4 +588,5 @@ main (int argc, void *argv[])
         }
         setSocketBlockingEnabled(sLeft, 1);//
     } while(1);
+*/
 }
