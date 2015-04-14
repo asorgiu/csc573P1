@@ -47,7 +47,7 @@ Each item of the linked list representing the index of RFCs contains these eleme
 #define DEBUG printf
 //#define DEBUG //
 
-#define LEN 100
+#define LEN 200
 #define MAX_MSG_SIZE 2000
 #define WELL_KNOWN_PORT 7734
 #define MAX_CLIENTS 100
@@ -369,7 +369,8 @@ int deletePeerFromRfcList(char* host)
         {
             rfcTail = prev;
         }
-        else if(del == rfcHead)
+        
+        if(del == rfcHead)
         {
             rfcHead = del->next;
         }
@@ -476,16 +477,26 @@ char* getTagValue(char *data, char *tag)
 	char *datacopy = malloc(strlen(data) + 1); // strtok modifies the string
 	char *result = 0;
 	char *s;
-	DEBUG("getTagValue()\n");
+	DEBUG("getTagValue() - %s\n", tag);
 	
 	strcpy(datacopy, data);
 	
 	s = strtok(datacopy, " \n\r");
+	
 	while (s)
 	{
+		DEBUG("   token = %s\n", s);
 		if (strcmp(s, tag) == 0)
 		{
-			s = strtok(0, " \n\r"); // the next token should be our value
+			// When looking for title, it can have spaces, so do not
+			// add " " as a delimiter.
+			if (strcmp(tag, "Title:") == 0) {
+				s = strtok(0, "\n\r");
+			}
+			else {
+				s = strtok(0, " \n\r"); // the next token should be our value
+			}
+			DEBUG("      found value - [%s]\n", s);
 			result = malloc(strlen(s) +1);
 			strcpy(result, s);
 			free(datacopy);
@@ -498,8 +509,37 @@ char* getTagValue(char *data, char *tag)
 	return result;
 }
 
+char* getTagVersion(char *data, int versionPosition)
+{
+	char *datacopy = malloc(strlen(data) + 1); // strtok modifies the string
+	char *version;
+	char *result = 0;
+	DEBUG("getTagVersion() - version at %d\n", versionPosition);
+	
+	strcpy(datacopy, data);
+	
+	version = strtok(datacopy, " \r\n");
+	versionPosition--;
+	
+	// we know the version is the nth token position based on
+	// versionPosition passed in
+	while (versionPosition)
+	{
+		version = strtok(0, " \r\n");
+		DEBUG("   version = %s\n", version);
+		versionPosition--;
+	}
+	
+	result = malloc(strlen(version) + 1);
+	strcpy(result, version);
+	free(datacopy);
+	
+	return result;
+}
+
 void add(char* data, int clientNum)
 {
+	DEBUG("add()\n");
 	int rfcNum;
 	char *rfcNumString;
 	char *host;
@@ -508,12 +548,12 @@ void add(char* data, int clientNum)
 	char *portString;
 	char *title;
 	struct rfc* newRfc = (struct rfc*)malloc(sizeof(struct rfc));
-	DEBUG("add()\n");
 
 	rfcNumString = getTagValue(data, "RFC");    DEBUG("   RFC = %s\n", rfcNumString);
-	host         = getTagValue(data, "Host:");  DEBUG("   Host = %s\n", rfcNumString);
-	portString   = getTagValue(data, "Port:");  DEBUG("   Port = %s\n", rfcNumString);
-	title        = getTagValue(data, "Title:"); DEBUG("   Title = %s\n", rfcNumString);
+	version      = getTagVersion(data, 4);      DEBUG("   Version = %s\n", version);
+	host         = getTagValue(data, "Host:");  DEBUG("   Host = %s\n", host);
+	portString   = getTagValue(data, "Port:");  DEBUG("   Port = %s\n", portString);
+	title        = getTagValue(data, "Title:"); DEBUG("   Title = %s\n", title);
 	
 	newRfc->number = atoi(rfcNumString);
 	newRfc->port   = atoi(portString);
@@ -525,10 +565,53 @@ void add(char* data, int clientNum)
 
 void lookup(char* data, int clientNum)
 {
+	DEBUG("lookup()\n");
+	int rfcNum;
+	char *rfcNumString;
+	char *host;
+	char *version;
+	int port;
+	char *portString;
+	char *title;
+	char reply[MAX_MSG_SIZE];
+
+	rfcNumString = getTagValue(data, "RFC");    DEBUG("   RFC = %s\n", rfcNumString);
+	version      = getTagVersion(data, 4);      DEBUG("   Version = %s\n", version);
+	host         = getTagValue(data, "Host:");  DEBUG("   Host = %s\n", host);
+	portString   = getTagValue(data, "Port:");  DEBUG("   Port = %s\n", portString);
+	title        = getTagValue(data, "Title:"); DEBUG("   Title = %s\n", title);
+	rfcNum = atoi(rfcNumString);
+
+	strcpy(&reply, version);
+	// Look through the entire rfcList for this RFC
+	struct rfcList *ptr = rfcHead;
+    bool found = false;
+
+    DEBUG("   Searching the list for value [%d] \n", rfcNum);
+
+    while(ptr != NULL)
+    {
+        if(ptr->item->number == rfcNum)
+        {
+        	DEBUG("      Found rfc in rfcList\n");
+            found = true;
+            // Add this rfc to the reply
+            
+            ptr = ptr->next;
+        }
+        else
+        {
+            ptr = ptr->next;
+        }
+    }
+
+	
 }
 
 void list(char* data, int clientNum)
 {
+	DEBUG("list()\n");
+	
 }
 
 void handleNewClient()
@@ -752,7 +835,6 @@ main (int argc, void *argv[])
     
     /* accept connections and handle data */
     int i, j;
-    //for (i=1; i < numPlayers+1; i++) {
     
     while (1) {
     	updateSelectList();

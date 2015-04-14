@@ -27,7 +27,7 @@
 #include <errno.h>
 #include <fcntl.h>
 
-#define LEN	100
+#define LEN	200
 #define BUF_SIZE 200000
 #define SERVER_PORT 7734
 #define PEER_PORT 7735
@@ -60,16 +60,100 @@ int process_buffer(unsigned char *potato, size_t *len)
     return 1;
 }
 
-
-void sendPotato(char* outgoing, int s)
+char *replacePort(char *command, char *orig, char *rep)
 {
-	int len=0;
+	static char buffer[4096];
+	char *p;
+
+	if(!(p = strstr(command, orig))) {
+		return command;
+	}
+
+	strncpy(buffer, command, p - command); // Copy characters from 'str' start to 'orig'
+	buffer[p - command] = '\0';
+
+	sprintf(buffer + (p - command), "%s%s", rep, p + strlen(orig));
+
+	return buffer;
+}
+
+// Here we are just going to throw some commands at the server
+// to exercise it's functionality.
+// Commands accepted by the Server are in the format:
+//
+// method <sp> RFC number <sp> version <cr> <lf>
+// header field name <sp> value <cr> <lf>
+// header field name <sp> value <cr> <lf>
+// <cr> <lf>
+//
+// There are three methods:
+// • ADD, to add a locally available RFC to the server’s index,
+// • LOOKUP, to find peers that have the specified RFC, and
+// • LIST, to request the whole index of RFCs from the server.
+// Also, three header fields are defined:
+// • Host: the hostname of the host sending the request,
+// • Port: the port to which the upload server of the host is attached, and
+// • Title: the title of the RFC
+//
+void callServerCommands(int serverSocket, int port)
+{
+	DEBUG("callServerCommands()\n");
+	int len;
+	char portStr[5];
+	sprintf(portStr, "%d", port);
 	
-	len = send(s, outgoing, strlen(outgoing), 0);
-   	if ( len != strlen(outgoing) ) {
-       	perror("send");
-       	exit(1);
-   	}
+	//
+	// Send ADD command
+	//
+	char addCommand[] = "ADD RFC 123 P2P-CI/1.0\n\rHost: engr-vcl-l-005.eos.ncsu.edu\n\rPort: xxxx\n\rTitle: A test rfc\n\r\n\r";
+	char *fullCommand;
+	
+	fullCommand = replacePort(&addCommand, "xxxx", &portStr);
+	
+	len = send(serverSocket, fullCommand, strlen(fullCommand), 0);
+	if (len != strlen(fullCommand)) {
+    	perror("send");
+    	exit(1);
+    }
+    DEBUG("Sent command: %s\n", fullCommand);
+    
+    //
+    // Send LOOKUP command
+    //
+    char lookupCommand[] = "LOOKUP RFC 123 P2P-CI/1.0\n\rHost: engr-vcl-l-005.eos.ncsu.edu\n\rPort: xxxx\n\rTitle: A test rfc\n\r\n\r";
+    fullCommand = replacePort(&lookupCommand, "xxxx", &portStr);
+    len = send(serverSocket, fullCommand, strlen(fullCommand), 0);
+	if (len != strlen(fullCommand)) {
+    	perror("send");
+    	exit(1);
+    }
+    DEBUG("Sent command: %s\n", fullCommand);
+
+    //
+    // Send LIST command
+    //
+    char listCommand[] = "LIST ALL P2P-CI/1.0\n\rHost: engr-vcl-l-005.eos.ncsu.edu\n\rPort: xxxx\n\r\n\r";
+    fullCommand = replacePort(&listCommand, "xxxx", &portStr);
+    len = send(serverSocket, fullCommand, strlen(fullCommand), 0);
+	if (len != strlen(fullCommand)) {
+    	perror("send");
+    	exit(1);
+    }
+    DEBUG("Sent command: %s\n", fullCommand);
+}
+
+void callPeerCommands(int serverSocket)
+{
+	DEBUG("callPeerCommands()\n");
+	while (1) {
+		sleep(10);
+	}
+}
+
+
+void handlePeerDownload(int peerSocket)
+{
+	DEBUG("handlePeerDownload()\n");
 }
 
 main (int argc, void *argv[])
@@ -149,24 +233,43 @@ main (int argc, void *argv[])
      *    Parent process - Connect to server and communicate with it
      */
     
-//    pid_t child_pid = fork(); 
-/*    if (child_pid == 0) {  // child - create a server socket for peer downloads
+    pid_t child_pid = fork(); 
+    if (child_pid == 0) {  // child - create a server socket for peer downloads
+    	int newPeerSocket;   	
+    	
     	rc = listen(incomingSocket, 5);
     	if ( rc < 0 ) {
         	perror("listen:");
         	exit(rc);
     	}
         
-    	DEBUG("Someone connected for download!\n");
-    	// Do download stuff here
-    	
-    	while(1) {
-    		sleep(10); // send and do stuff here!
+		while (1)
+		{
+			newPeerSocket = accept(incomingSocket, NULL, NULL);
+			if (newPeerSocket < 0) {
+				perror("accept");
+				exit(1);
+			}
+			
+			pid_t pid = fork();
+			if (pid == 0) { // child - do the peer download processing
+				DEBUG("Someone connected for download!\n");
+				close(incomingSocket);
+				handlePeerDownload(newPeerSocket);
+				exit(0);
+			}
+			else if (pid > 0) { // parent - go back to handling incoming peer connections
+				close(newPeerSocket);
+			}
+			else { // error forking
+        		printf("ERROR:  Could not fork a new process!\n");
+    		}
     	}
+
     	DEBUG("Child should not be exiting!\n");
     }
     else if (child_pid > 0) { // parent - connecting to server socket
-*/    	/* fill in hostent struct */
+    	/* fill in hostent struct */
     	close(incomingSocket);
     	pHostentServer = gethostbyname(argv[1]); 
     	if ( pHostentServer == NULL ) {
@@ -222,12 +325,8 @@ main (int argc, void *argv[])
     	}
     	DEBUG("  Ack\n");
     	
-    	//sleep(3);
-    	//DEBUG("Wake\n");
     	// Send port number
     	int32_t conv = htonl(peerPort);
-    	//char *portString = (char*)&conv;
-    	//len = send(serverSocket, portString, sizeof(conv), 0);
     	len = send(serverSocket, &conv, sizeof(conv), 0);
     	if (len != sizeof(conv)) {
     		perror("send");
@@ -242,31 +341,16 @@ main (int argc, void *argv[])
     	}
     	DEBUG("   Ack\n");
     	
-    	while(1) {
-    		sleep(10); // send and do stuff here!
-    	}
+    	callServerCommands(serverSocket, peerPort); // Contact server to give/get info
+    	callPeerCommands(serverSocket);   // Contact peers to download RFCs
+    	
     	DEBUG("Parent should not be exiting!\n");
     	
-/*    	memset(&buf, 0, LEN);
-    	len = recv(serverSocket, buf, 32, 0);
-    	if ( len < 0 ) {
-        	perror("recv");
-        	exit(1);
-    	}
-    	buf[len] = '\0';
-    	iPlayer = atoi(buf);
-    	str[0] = 'A';
-    	str[1] = '\0';
-    	len = send(serverSocket, str, strlen(str), 0);
-    	if ( len != strlen(str) ) {
-        	perror("send");
-        	exit(1);
-    	}
-*/
-//    }
-//    else { // error forking
-//        printf("ERROR:  Could not fork a new process!\n");
-//    }
+
+    }
+    else { // error forking
+        printf("ERROR:  Could not fork a new process!\n");
+    }
 
 /*
     // Get host name of player to our right from host
