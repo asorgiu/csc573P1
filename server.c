@@ -537,6 +537,71 @@ char* getTagVersion(char *data, int versionPosition)
 	return result;
 }
 
+int isVersionOk(char *version) {
+	DEBUG("isVersionOk()\n");
+	if (strcmp(version, "P2P-CI/1.0") == 0) {
+		//they match
+		return 1;
+	}
+	else {
+		return 0;
+	}
+}
+
+void send400(int clientNum) {
+	DEBUG("send400()\n");
+	char message[] = "P2P-CI/1.0 400 Bad Request\r\n";
+	
+	send(clientList[clientNum], message, strlen(message), 0);
+}
+
+void send404(int clientNum) {
+	DEBUG("send404()\n");
+	char message[] = "P2P-CI/1.0 404 P2P-CI Not Found\r\n";
+	
+	send(clientList[clientNum], message, strlen(message), 0);
+}
+
+void send505(int clientNum) {
+	DEBUG("send505()\n");
+	char message[] = "P2P-CI/1.0 505 P2P-CI Version Not Supported\r\n";
+	
+	send(clientList[clientNum], message, strlen(message), 0);
+	DEBUG("   Sent message: %s\n", message);
+}
+
+void sendRfcQueryResponse(rfcList* resultList, int clientNum)
+{
+	DEBUG("sendRfcQueryResponse()\n");
+	char replyMessage[MAX_MSG_SIZE];
+	char rfcNumString[10];
+	char portNumString[10];
+	memset(&replyMessage, 0, MAX_MSG_SIZE);
+	
+	if (resultList == NULL) {
+		// Nothing was found
+		send404(clientNum);
+	}
+	else {
+		strcpy(replyMessage, "P2P-CI/1.0 200 OK\r\n");
+		while (resultList != NULL) {
+			sprintf(rfcNumString, "%d", resultList->item->number);
+			sprintf(portNumString, "%d", resultList->item->port);
+			strcat(replyMessage, "RFC ");
+			strcat(replyMessage, rfcNumString);
+			strcat(replyMessage, " ");
+			strcat(replyMessage, resultList->item->title);
+			strcat(replyMessage, " ");
+			strcat(replyMessage, resultList->item->peerHostname);
+			strcat(replyMessage, " ");
+			strcat(replyMessage, portNumString);
+			strcat(replyMessage, "\r\n");
+			resultList = resultList->next;
+		}
+		send(clientList[clientNum], replyMessage, strlen(replyMessage), 0);
+	}
+}
+
 void add(char* data, int clientNum)
 {
 	DEBUG("add()\n");
@@ -547,6 +612,8 @@ void add(char* data, int clientNum)
 	int port;
 	char *portString;
 	char *title;
+	char replyMessage[MAX_MSG_SIZE];
+	memset(&replyMessage, 0, MAX_MSG_SIZE);
 	struct rfc* newRfc = (struct rfc*)malloc(sizeof(struct rfc));
 
 	rfcNumString = getTagValue(data, "RFC");    DEBUG("   RFC = %s\n", rfcNumString);
@@ -555,12 +622,30 @@ void add(char* data, int clientNum)
 	portString   = getTagValue(data, "Port:");  DEBUG("   Port = %s\n", portString);
 	title        = getTagValue(data, "Title:"); DEBUG("   Title = %s\n", title);
 	
+	// Check version
+	if (!isVersionOk(version)) {
+		send505(clientNum);
+		return;
+	}
+	
 	newRfc->number = atoi(rfcNumString);
 	newRfc->port   = atoi(portString);
 	strcpy(newRfc->peerHostname, host);
 	strcpy(newRfc->title, title);
 	
 	addToRfcList(newRfc);
+	
+	// Send OK reply
+	strcpy(replyMessage, "P2P-CI/1.0 200 OK\r\nRFC ");
+	strcat(replyMessage, rfcNumString);
+	strcat(replyMessage, " ");
+	strcat(replyMessage, title);
+	strcat(replyMessage, " ");
+	strcat(replyMessage, host);
+	strcat(replyMessage, " ");
+	strcat(replyMessage, portString);
+	strcat(replyMessage, "\r\n");
+	send(clientList[clientNum], replyMessage, strlen(replyMessage), 0);
 }
 
 void lookup(char* data, int clientNum)
@@ -574,6 +659,8 @@ void lookup(char* data, int clientNum)
 	char *portString;
 	char *title;
 	char reply[MAX_MSG_SIZE];
+	rfcList *resultList = (struct rfcList*)malloc(sizeof(struct rfcList));
+	rfcList *currList = NULL;
 
 	rfcNumString = getTagValue(data, "RFC");    DEBUG("   RFC = %s\n", rfcNumString);
 	version      = getTagVersion(data, 4);      DEBUG("   Version = %s\n", version);
@@ -582,6 +669,12 @@ void lookup(char* data, int clientNum)
 	title        = getTagValue(data, "Title:"); DEBUG("   Title = %s\n", title);
 	rfcNum = atoi(rfcNumString);
 
+	// Check version
+	if (!isVersionOk(version)) {
+		send505(clientNum);
+		return;
+	}
+	
 	strcpy(&reply, version);
 	// Look through the entire rfcList for this RFC
 	struct rfcList *ptr = rfcHead;
@@ -594,8 +687,20 @@ void lookup(char* data, int clientNum)
         if(ptr->item->number == rfcNum)
         {
         	DEBUG("      Found rfc in rfcList\n");
-            found = true;
-            // Add this rfc to the reply
+        	// Add this rfc to the reply
+        	if (found == false) {
+        		// add as the first RFC found
+        		resultList->item = ptr->item;
+        		resultList->next = NULL;
+        		currList = resultList;
+        		found = true;
+        	}
+        	else {
+        		currList->next = (struct rfcList*)malloc(sizeof(struct rfcList));
+        		currList = currList->next;
+        		currList->item = ptr->item;
+        		currList->next = NULL;
+        	}
             
             ptr = ptr->next;
         }
@@ -605,13 +710,32 @@ void lookup(char* data, int clientNum)
         }
     }
 
-	
+	if (found == false) {
+		sendRfcQueryResponse(NULL, clientNum);
+	}
+	else 
+	{
+	    sendRfcQueryResponse(resultList, clientNum);
+	}
 }
 
 void list(char* data, int clientNum)
 {
 	DEBUG("list()\n");
+	char *version;
+	char reply[MAX_MSG_SIZE];
+
+	version      = getTagVersion(data, 3);      DEBUG("   Version = %s\n", version);
+
+	// Check version
+	if (!isVersionOk(version)) {
+		send505(clientNum);
+		return;
+	}
 	
+	// Sending rfcHead will send ALL RFCs on the server
+	sendRfcQueryResponse(rfcHead, clientNum);
+
 }
 
 void handleNewClient()

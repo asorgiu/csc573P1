@@ -100,7 +100,9 @@ void callServerCommands(int serverSocket, int port)
 	DEBUG("callServerCommands()\n");
 	int len;
 	char portStr[5];
+	char buf[BUF_SIZE];
 	sprintf(portStr, "%d", port);
+	memset(&buf, 0, sizeof(buf));
 	
 	//
 	// Send ADD command
@@ -116,10 +118,30 @@ void callServerCommands(int serverSocket, int port)
     	exit(1);
     }
     DEBUG("Sent command: %s\n", fullCommand);
+    // Wait for Ack
+	recv(serverSocket, buf, sizeof(buf)-1, 0);
+	DEBUG("Received: %s\n", buf);
+    
+	//
+	// Send 2nd ADD command
+	//
+	char addCommand2[] = "ADD RFC 456 P2P-CI/1.0\n\rHost: engr-vcl-l-005.eos.ncsu.edu\n\rPort: xxxx\n\rTitle: Just another rfc\n\r\n\r";
+	fullCommand = replacePort(&addCommand2, "xxxx", &portStr);
+	
+	len = send(serverSocket, fullCommand, strlen(fullCommand), 0);
+	if (len != strlen(fullCommand)) {
+    	perror("send");
+    	exit(1);
+    }
+    DEBUG("Sent command: %s\n", fullCommand);
+    // Wait for Ack
+	recv(serverSocket, buf, sizeof(buf)-1, 0);
+	DEBUG("Received: %s\n", buf);
     
     //
     // Send LOOKUP command
     //
+	memset(&buf, 0, sizeof(buf));
     char lookupCommand[] = "LOOKUP RFC 123 P2P-CI/1.0\n\rHost: engr-vcl-l-005.eos.ncsu.edu\n\rPort: xxxx\n\rTitle: A test rfc\n\r\n\r";
     fullCommand = replacePort(&lookupCommand, "xxxx", &portStr);
     len = send(serverSocket, fullCommand, strlen(fullCommand), 0);
@@ -128,10 +150,35 @@ void callServerCommands(int serverSocket, int port)
     	exit(1);
     }
     DEBUG("Sent command: %s\n", fullCommand);
+    // Wait for Ack
+	recv(serverSocket, buf, sizeof(buf)-1, 0);
+	DEBUG("Received: %s\n", buf);
 
+	sleep(1);
+	
+	    
+    //
+    // Send LOOKUP command with BAD VERSION
+    //
+	memset(&buf, 0, sizeof(buf));
+    char badVersionCommand[] = "LOOKUP RFC 123 P2P-CI/2.0\n\rHost: engr-vcl-l-005.eos.ncsu.edu\n\rPort: xxxx\n\rTitle: A test rfc\n\r\n\r";
+    fullCommand = replacePort(&badVersionCommand, "xxxx", &portStr);
+    len = send(serverSocket, fullCommand, strlen(fullCommand), 0);
+	if (len != strlen(fullCommand)) {
+    	perror("send");
+    	exit(1);
+    }
+    DEBUG("Sent command: %s\n", fullCommand);
+    // Wait for Ack
+	recv(serverSocket, buf, sizeof(buf)-1, 0);
+	DEBUG("Received: %s\n", buf);
+	
+	sleep(1);
+	
     //
     // Send LIST command
     //
+	memset(&buf, 0, sizeof(buf));
     char listCommand[] = "LIST ALL P2P-CI/1.0\n\rHost: engr-vcl-l-005.eos.ncsu.edu\n\rPort: xxxx\n\r\n\r";
     fullCommand = replacePort(&listCommand, "xxxx", &portStr);
     len = send(serverSocket, fullCommand, strlen(fullCommand), 0);
@@ -140,6 +187,9 @@ void callServerCommands(int serverSocket, int port)
     	exit(1);
     }
     DEBUG("Sent command: %s\n", fullCommand);
+    // Wait for Ack
+	recv(serverSocket, buf, sizeof(buf)-1, 0);
+	DEBUG("Received: %s\n", buf);
 }
 
 void callPeerCommands(int serverSocket)
@@ -154,6 +204,13 @@ void callPeerCommands(int serverSocket)
 void handlePeerDownload(int peerSocket)
 {
 	DEBUG("handlePeerDownload()\n");
+	char buf[BUF_SIZE];
+	memset(&buf, 0, sizeof(buf));
+	
+    // Get the download request
+	recv(peerSocket, buf, sizeof(buf)-1, 0);
+	DEBUG("Received: %s\n", buf);
+
 }
 
 main (int argc, void *argv[])
