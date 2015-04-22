@@ -1,0 +1,2 @@
+This is my sample RFC numbered 123 for CSC573.
+It should be sent in it's entirety to the client requesting it!

@@ -485,7 +485,6 @@ char* getTagValue(char *data, char *tag)
 	
 	while (s)
 	{
-		DEBUG("   token = %s\n", s);
 		if (strcmp(s, tag) == 0)
 		{
 			// When looking for title, it can have spaces, so do not
@@ -526,7 +525,6 @@ char* getTagVersion(char *data, int versionPosition)
 	while (versionPosition)
 	{
 		version = strtok(0, " \r\n");
-		DEBUG("   version = %s\n", version);
 		versionPosition--;
 	}
 	
@@ -550,24 +548,23 @@ int isVersionOk(char *version) {
 
 void send400(int clientNum) {
 	DEBUG("send400()\n");
-	char message[] = "P2P-CI/1.0 400 Bad Request\r\n";
+	char message[] = "P2P-CI/1.0 400 Bad Request\r\n\r\n";
 	
 	send(clientList[clientNum], message, strlen(message), 0);
 }
 
 void send404(int clientNum) {
 	DEBUG("send404()\n");
-	char message[] = "P2P-CI/1.0 404 P2P-CI Not Found\r\n";
+	char message[] = "P2P-CI/1.0 404 P2P-CI Not Found\r\n\r\n";
 	
 	send(clientList[clientNum], message, strlen(message), 0);
 }
 
 void send505(int clientNum) {
 	DEBUG("send505()\n");
-	char message[] = "P2P-CI/1.0 505 P2P-CI Version Not Supported\r\n";
+	char message[] = "P2P-CI/1.0 505 P2P-CI Version Not Supported\r\n\r\n";
 	
 	send(clientList[clientNum], message, strlen(message), 0);
-	DEBUG("   Sent message: %s\n", message);
 }
 
 void sendRfcQueryResponse(rfcList* resultList, int clientNum)
@@ -598,6 +595,7 @@ void sendRfcQueryResponse(rfcList* resultList, int clientNum)
 			strcat(replyMessage, "\r\n");
 			resultList = resultList->next;
 		}
+		strcat(replyMessage, "\r\n");
 		send(clientList[clientNum], replyMessage, strlen(replyMessage), 0);
 	}
 }
@@ -644,7 +642,7 @@ void add(char* data, int clientNum)
 	strcat(replyMessage, host);
 	strcat(replyMessage, " ");
 	strcat(replyMessage, portString);
-	strcat(replyMessage, "\r\n");
+	strcat(replyMessage, "\r\n\r\n");
 	send(clientList[clientNum], replyMessage, strlen(replyMessage), 0);
 }
 

@@ -19,6 +19,8 @@
 
 /*........................ Include Files ....................................*/
 #include <stdio.h>
+#include <stdlib.h>
+#include <string.h>
 #include <sys/types.h>
 #include <sys/socket.h>
 #include <netinet/in.h>
@@ -26,13 +28,17 @@
 #include <netdb.h>
 #include <errno.h>
 #include <fcntl.h>
+#include <sys/utsname.h>
+#include <time.h>
 
 #define LEN	200
-#define BUF_SIZE 200000
+#define BUF_SIZE 20000
 #define SERVER_PORT 7734
 #define PEER_PORT 7735
 #define DEBUG printf
 //#define DEBUG //
+
+char myHostname[LEN];
 
 /** Returns 1 on success, or 0 if there was an error */
 int setSocketBlockingEnabled(int fd, int blocking)
@@ -45,19 +51,67 @@ int setSocketBlockingEnabled(int fd, int blocking)
    return (fcntl(fd, F_SETFL, flags) == 0) ? 1 : 0;
 }
 
-int process_buffer(unsigned char *potato, size_t *len)
-{        
-    unsigned payload_len = potato[0];
-        
-    if (*len < 1 + payload_len) {
-        /* Too short - haven't recieved whole payload yet */
-        return 0;
-    }
-    /* Now shuffle the remaining data in the buffer back to the start */
-    *len -= 1 + payload_len;
-    if (*len > 0)
-        memmove(potato, potato + 1 + payload_len, *len);
-    return 1;
+char* getTagValue(char *data, char *tag)
+{
+	char *datacopy = malloc(strlen(data) + 1); // strtok modifies the string
+	char *result = 0;
+	char *s;
+	DEBUG("getTagValue() - %s\n", tag);
+	
+	strcpy(datacopy, data);
+	
+	s = strtok(datacopy, " \n\r");
+	
+	while (s)
+	{
+		if (strcmp(s, tag) == 0)
+		{
+			// When looking for title, it can have spaces, so do not
+			// add " " as a delimiter.
+			if (strcmp(tag, "Title:") == 0) {
+				s = strtok(0, "\n\r");
+			}
+			else {
+				s = strtok(0, " \n\r"); // the next token should be our value
+			}
+			DEBUG("      found value - [%s]\n", s);
+			result = malloc(strlen(s) +1);
+			strcpy(result, s);
+			free(datacopy);
+			return result;
+		}
+		s = strtok(0, " \n\r");
+	}
+	free(datacopy);
+	
+	return result;
+}
+
+char* getTagVersion(char *data, int versionPosition)
+{
+	char *datacopy = malloc(strlen(data) + 1); // strtok modifies the string
+	char *version;
+	char *result = 0;
+	DEBUG("getTagVersion() - version at %d\n", versionPosition);
+	
+	strcpy(datacopy, data);
+	
+	version = strtok(datacopy, " \r\n");
+	versionPosition--;
+	
+	// we know the version is the nth token position based on
+	// versionPosition passed in
+	while (versionPosition)
+	{
+		version = strtok(0, " \r\n");
+		versionPosition--;
+	}
+	
+	result = malloc(strlen(version) + 1);
+	strcpy(result, version);
+	free(datacopy);
+	
+	return result;
 }
 
 char *replacePort(char *command, char *orig, char *rep)
@@ -75,6 +129,95 @@ char *replacePort(char *command, char *orig, char *rep)
 	sprintf(buffer + (p - command), "%s%s", rep, p + strlen(orig));
 
 	return buffer;
+}
+
+void getRfc(int rfc, char* host, int peerPort)
+{
+	// Connect to another peer and send the GET command,
+	// then receive the response
+	DEBUG("getRfc()\n");
+	int peerServerSocket;
+    struct hostent *pHostentPeerServer;
+    struct sockaddr_in sinPeerServer;
+    int on=1;
+    int rc;
+    int len;
+    char rfcString[10];
+    char request[BUF_SIZE];
+    char response[BUF_SIZE];
+    memset(&request, 0, sizeof(request));
+    memset(&response, 0, sizeof(response));
+
+    	pHostentPeerServer = gethostbyname(host); 
+    	if ( pHostentPeerServer == NULL ) {
+        	fprintf(stderr, "Host not found (%s)\n", host);
+        	exit(1);
+    	}
+    
+    	/* create and connect to a socket */
+    
+    	/* use address family INET and STREAMing sockets (TCP) */
+    	peerServerSocket = socket(AF_INET, SOCK_STREAM, 0);
+    	if ( peerServerSocket < 0 ) {
+        	perror("socket:");
+        	exit(peerServerSocket);
+    	}
+    
+    	// The setsockopt() function is used so the local address
+    	// can be reused when the server is restarted before the required
+    	// wait time expires
+		if((rc = setsockopt(peerServerSocket, SOL_SOCKET, SO_REUSEADDR, (char *)&on, sizeof(on))) < 0)
+		{
+			perror("setsockopt() error");
+			close(peerServerSocket);
+			exit (-1);
+		}
+
+    	// set up the address and port
+    	sinPeerServer.sin_family = AF_INET;
+    	sinPeerServer.sin_port = htons(peerPort);
+    	memcpy(&sinPeerServer.sin_addr, pHostentPeerServer->h_addr_list[0], pHostentPeerServer->h_length);
+    
+    	// connect to socket at above addr and port
+    	rc = connect(peerServerSocket, (struct sockaddr *)&sinPeerServer, sizeof(sinPeerServer));
+    	if ( rc < 0 ) {
+        	perror("connect:");
+        	exit(rc);
+    	}
+    	
+    	// And get the OS info
+		struct utsname osbuf;
+		uname(&osbuf);
+    
+    	// set up the request
+    	sprintf(rfcString, "%d", rfc);
+    	strcpy(request, "GET RFC ");
+    	strcat(request, rfcString);
+    	strcat(request, " P2P-CI/1.0\r\nHost: ");
+    	strcat(request, myHostname);
+    	strcat(request, "\r\nOS: ");
+		strcat(request, osbuf.sysname);
+		strcat(request, " ");
+		strcat(request, osbuf.release);
+		strcat(request, "\r\n\r\n");
+    	
+    	// Send the server the GET request
+    	len = send(peerServerSocket, request, strlen(request), 0);
+    	if (len != strlen(request)) {
+    		perror("send");
+    		exit(1);
+    	}
+    	DEBUG("   Peer Client Sent: %s\n", request);
+    	
+    	// Wait for response
+    	len = recv(peerServerSocket, response, sizeof(response)-1, 0);
+    	if (len < 0) {
+    		perror("recv:");
+    	}
+    	DEBUG("  Peer Client Received: %s\n", response);
+    	
+    	sleep(1);
+    	close(peerServerSocket);
 }
 
 // Here we are just going to throw some commands at the server
@@ -195,28 +338,173 @@ void callServerCommands(int serverSocket, int port)
 void callPeerCommands(int serverSocket)
 {
 	DEBUG("callPeerCommands()\n");
+	// This should change to a different client!
+	getRfc(123, myHostname, PEER_PORT);
+	
+	
 	while (1) {
+		DEBUG(".");
 		sleep(10);
 	}
 }
 
+int isVersionOk(char *version) {
+	DEBUG("isVersionOk()\n");
+	if (strcmp(version, "P2P-CI/1.0") == 0) {
+		//they match
+		return 1;
+	}
+	else {
+		return 0;
+	}
+}
+
+void send400(int peerSocket) {
+	DEBUG("send400()\n");
+	char message[] = "P2P-CI/1.0 400 Bad Request\r\n\r\n";
+	
+	send(peerSocket, message, strlen(message), 0);
+}
+
+void send404(int peerSocket) {
+	DEBUG("send404()\n");
+	char message[] = "P2P-CI/1.0 404 P2P-CI Not Found\r\n\r\n";
+	
+	send(peerSocket, message, strlen(message), 0);
+}
+
+void send505(int peerSocket) {
+	DEBUG("send505()\n");
+	char message[] = "P2P-CI/1.0 505 P2P-CI Version Not Supported\r\n\r\n";
+	
+	send(peerSocket, message, strlen(message), 0);
+}
 
 void handlePeerDownload(int peerSocket)
 {
 	DEBUG("handlePeerDownload()\n");
-	char buf[BUF_SIZE];
+	char buf[256];
 	memset(&buf, 0, sizeof(buf));
-	
-    // Get the download request
+	int rfcNum;
+	char *rfcNumString;
+	char *host;
+	char *version;
+	char *os;
+	char filename[100];
+	char reply[BUF_SIZE];
+	int fd;
+	FILE *fp;
+	struct stat file_stat;
+	int offset, bytesRemaining;
+	int len;
+	char fileSize[200];
+	time_t modifiedTime;
+	memset(&reply, 0, sizeof(reply));
+
+	// Get the download request
 	recv(peerSocket, buf, sizeof(buf)-1, 0);
 	DEBUG("Received: %s\n", buf);
+	
+	// Check the command that was sent
+	if (buf[0] != 'G' || buf[1] != 'E' || buf[2] != 'T') {
+		// Invalid command
+		send400(peerSocket);
+		return;
+	}
+	
+	rfcNumString = getTagValue(&buf, "RFC");    DEBUG("   RFC = %s\n", rfcNumString);
+	version      = getTagVersion(&buf, 4);      DEBUG("   Version = %s\n", version);
+	host         = getTagValue(&buf, "Host:");  DEBUG("   Host = %s\n", host);
+	os           = getTagValue(&buf, "OS:");    DEBUG("   OS = %s\n", os);
+	rfcNum = atoi(rfcNumString);
 
+	// Check version
+	if (!isVersionOk(version)) {
+		send505(peerSocket);
+		return;
+	}
+	
+	strcpy(filename, "RFC");
+	strcat(filename, rfcNumString);
+	strcat(filename, ".txt");
+	
+	fd = open(filename, O_RDONLY);
+	if (fd == -1) {
+		printf("Error opening file %s\n", filename);
+		send404(peerSocket);
+		return;
+	}
+	fp = fopen(filename, "r");
+	if (!fp) {
+		printf("Error opening file %s\n", filename);
+		send404(peerSocket);
+		return;
+	}
+	DEBUG("File open\n");
+	
+	// Get date and time for our reply
+	time_t t = time(NULL);
+	struct tm tm = *localtime(&t);
+	char str_date[100];
+	char str_mdate[100];
+	sprintf(str_date, "%d-%d-%d %d:%d:%d", tm.tm_year+1900, tm.tm_mon+1, tm.tm_mday, tm.tm_hour, tm.tm_min, tm.tm_sec);
+	// These strftime() calls were hanging?! (was before I included time.h)
+	//strftime(str_time, sizeof(str_time), "%H %M %S", tm);
+	//strftime(str_date, sizeof(str_date), "%d %m %Y", tm);
+	
+	// And get the OS info
+	struct utsname osbuf;
+	uname(&osbuf);
+	
+	// And file info
+	if (fstat(fd, &file_stat) < 0) {
+		printf("Error fstat of file %s", filename);
+		return;
+	}
+
+	bytesRemaining = file_stat.st_size;
+	sprintf(fileSize, "%d", bytesRemaining);
+	modifiedTime = file_stat.st_mtime;
+	tm = *localtime(&modifiedTime);
+	sprintf(str_mdate, "%d-%d-%d %d:%d:%d", tm.tm_year+1900, tm.tm_mon+1, tm.tm_mday, tm.tm_hour, tm.tm_min, tm.tm_sec);
+	//strftime(str_mtime, sizeof(str_mtime), "%H %M %S", tm);
+	//strftime(str_mdate, sizeof(str_mdate), "%d %m %Y", tm);
+	
+	DEBUG("Time ok\n");
+	strcpy(reply, "P2P-CI/1.0 200 OK\r\nDate: ");
+	strcat(reply, str_date);
+	strcat(reply, "\r\nOS: ");
+	strcat(reply, osbuf.sysname);
+	strcat(reply, " ");
+	strcat(reply, osbuf.release);
+	strcat(reply, "\r\nLast-Modified: ");
+	strcat(reply, str_mdate);
+	strcat(reply, "\r\nContent-Length: ");
+	strcat(reply, fileSize);
+	strcat(reply, "\r\nContent-Type: text/text\r\n\r\n");
+	
+	// Not efficient way to do this, but taking the shortcut.
+	// Should use sendfile() and do more error checking
+	memset(&buf, 0, sizeof(buf));
+	while(fgets(buf, 256, fp) != NULL)
+	{
+		DEBUG("      read: %s", buf);
+		strcat(reply, buf);
+	}
+	
+	send(peerSocket, reply, strlen(reply), 0);
+	DEBUG("   Sent: %s\n", reply);
+	
+	sleep(1);
+	fclose(fd); // had to close the file AFTER sending for some reason or
+	fclose(fp); //   it seemed to be closing our socket connection :(
+	close(peerSocket);	
 }
 
 main (int argc, void *argv[])
 {
     int serverSocket, rc, len, serverPort, peerPort, incomingSocket, maxfd, result, i;
-    char host[LEN], str[LEN], buf[LEN], hostRight[LEN];
+    char str[LEN], buf[LEN], hostRight[LEN];
     char potato[BUF_SIZE];
     size_t recv_len = 0;
     struct hostent *pHostentServer, *pHostentIncoming;
@@ -224,12 +512,12 @@ main (int argc, void *argv[])
     fd_set readset, tempset;
     struct timeval tv;
     int on=1;
+    memset(&myHostname, 0, sizeof(myHostname));
 
 	srand(time(NULL));
     
     memset(&sinServer, 0, sizeof(sinServer));
     memset(&sinIncoming, 0, sizeof(sinIncoming));
-    memset(&host, 0, sizeof(host));
     
     /* read host and port number from command line */
     if ( argc != 2 ) {
@@ -252,11 +540,11 @@ main (int argc, void *argv[])
 		}
     
     	/* fill in hostent struct for self */
-    	gethostname(host, sizeof(host));
-    	pHostentIncoming = gethostbyname(host);
-    	DEBUG("Hostname: %s\n", host);
+    	gethostname(myHostname, sizeof(myHostname));
+    	pHostentIncoming = gethostbyname(myHostname);
+    	DEBUG("Hostname: %s\n", myHostname);
     	if ( pHostentIncoming == NULL ) {
-        	fprintf(stderr, "%s: host not found (%s)\n", argv[0], host);
+        	fprintf(stderr, "%s: host not found (%s)\n", argv[0], myHostname);
         	exit(1);
     	}
 
@@ -368,12 +656,12 @@ main (int argc, void *argv[])
     
     	// Send the server our hostname and listening port so it can let
     	// other peers know how to connect to us
-    	len = send(serverSocket, host, strlen(host), 0);
-    	if (len != strlen(host)) {
+    	len = send(serverSocket, myHostname, strlen(myHostname), 0);
+    	if (len != strlen(myHostname)) {
     		perror("send");
     		exit(1);
     	}
-    	DEBUG("Sent host: %s\n", host);
+    	DEBUG("Sent host: %s\n", myHostname);
     	
     	// Wait for Ack
     	len = recv(serverSocket, buf, sizeof(buf)-1, 0);
@@ -408,326 +696,4 @@ main (int argc, void *argv[])
     else { // error forking
         printf("ERROR:  Could not fork a new process!\n");
     }
-
-/*
-    // Get host name of player to our right from host
-    // This also signals us to start creating the ring of connections between players
-    memset(&hostRight, 0, LEN);
-    recv_len = 0;
-    int complete = 0;
-    len = recv(s, hostRight, LEN, 0);
-    if ( len < 0 ) {
-        perror("recv");
-        exit(1);
-    }
-    hostRight[len] = '\0';
-    //printf("Got test: %s\n", hostRight);
-    len = send(s, str, strlen(str), 0);
-    if ( len != strlen(str) ) {
-        perror("send");
-        exit(1);
-    }
-    hpRight = gethostbyname(hostRight); 
-    if ( hpRight == NULL ) {
-        fprintf(stderr, "%s: host not found (%s)\n", argv[0], hostRight);
-        exit(1);
-    }
-
-    
-    //
-    // Then accept connection from player on left
-    //
-    // If we are the last player, we are the first to connect right THEN accept
-    if (iPlayer != numPlayers) {
-    	//printf("Debug: Accept player to Left <--\n");
-        memset(&sinLeft, 0, sizeof(sinLeft));
-        len = sizeof(sinLeft);
-        sLeft = accept(sLeftIncoming, (struct sockaddr *)&sinLeft, &len);
-        if ( sLeft < 0 ) {
-            perror("accept:");
-            exit(rc);
-        }
-        
-        if (iPlayer == 1) {
-        	sleep(1);
-        }
-        // Then connect to player on the right after the player on the left has connected
-    	sRight = socket(AF_INET, SOCK_STREAM, 0);
-    	if ( sRight < 0 ) {
-      		perror("socket:");
-        	exit(sLeft);
-    	}
-    
-    	// set up the address and port
-    	memset(&sinRight, 0, sizeof(sinRight)); 
-    	sinRight.sin_family = AF_INET;
-    	if (iPlayer == numPlayers) {
-        	sinRight.sin_port = htons(port+1);
-    	} else {
-        	sinRight.sin_port = htons(port+iPlayer+1);
-    	}
-    	memcpy(&sinRight.sin_addr, hpRight->h_addr_list[0], hpRight->h_length);
-    
-    	// connect to socket at above addr and port
-    	rc = connect(sRight, (struct sockaddr *)&sinRight, sizeof(sinRight));
-    	if ( rc < 0 ) {
-        	perror("connect:");
-        	exit(rc);
-    	}
-    	//printf("Debug: Connected!\n");
-    }
-    else {
-        // Last player must connect to first player (on right) first, then wait for accept
-    	sRight = socket(AF_INET, SOCK_STREAM, 0);
-    	if ( sRight < 0 ) {
-      		perror("socket:");
-        	exit(sLeft);
-    	}
-    
-    	// set up the address and port
-    	memset(&sinRight, 0, sizeof(sinRight)); 
-    	sinRight.sin_family = AF_INET;
-        sinRight.sin_port = htons(port+1);
-    	memcpy(&sinRight.sin_addr, hpRight->h_addr_list[0], hpRight->h_length);
-    
-    	// connect to socket at above addr and port
-    	rc = connect(sRight, (struct sockaddr *)&sinRight, sizeof(sinRight));
-    	if ( rc < 0 ) {
-        	perror("connect:");
-        	exit(rc);
-    	}
-    	
-    	// Now accept
-    	//printf("Debug: Accept player to Left <--\n");
-        memset(&sinLeft, 0, sizeof(sinLeft));
-        len = sizeof(sinLeftIncoming);
-        sLeft = accept(sLeftIncoming, (struct sockaddr *)&sinLeft, &len);
-        if ( sLeft < 0 ) {
-            perror("accept:");
-            exit(rc);
-        }
-        //printf("Debug: Connected!\n");
-    }
-    
-    
-    // Now we wait for the potato and listen on the left, right, and master sockets
-
-    
-    // Set up our sockets to use select
-    FD_ZERO(&readset);
-    FD_ZERO(&tempset);
-    maxfd = 0;
-    FD_SET(sLeft, &readset);
-    maxfd = (sLeft > maxfd) ? sLeft : maxfd;
-    FD_SET(sRight, &readset);
-    maxfd = (sRight > maxfd) ? sRight : maxfd;
-    FD_SET(s, &readset);
-    maxfd = (s > maxfd) ? s : maxfd;
-    //printf("Debug: Adding sockets to readset\n");
-    
-    do {
-        memcpy(&tempset, &readset, sizeof(tempset));
-        tv.tv_sec = 3;
-        tv.tv_usec = 0;
-        result = select(maxfd + 1, &tempset, NULL, NULL, &tv);
-        //printf(".");
-
-        if (result == 0) { // select timed out
-        } 
-        else if (result < 0 && errno != EINTR) {
-            perror("select");
-            exit(1);
-        }
-        else if (result > 0) {
-            if (FD_ISSET(s, &tempset)) {
-                // received potato or end game message from Master
-                //printf("Debug: received a message from Master\n");
-                memset(&buf, '\0', LEN);
-                memset(&potato, '\0', BUF_SIZE);
-                len = recv(s, buf, LEN, 0);
-                if ( len < 0 ) {
-                    perror("recv");
-                    exit(1);
-                }
-                else if (len == 0) {
-                	// We got a close
-                	//printf("Debug: Close from Master\n");
-                	FD_CLR(s, &readset);
-                	close(s);
-                	exit(0);
-                }
-                if (buf[0] == 'S')
-                {
-                	// Stop command
-                	//printf("Debug: Got STOP command!\n");
-                	close(sRight);
-                	close(s);
-                	exit(0);
-                }
-                else {
-                	//memcpy(&potato, &buf, len);
-                	potato[0] = iPlayer;
-                	potato[1] = '\0';
-                	//printf("Starting Potato! len=%d\n", len);
-                	// Check to see if the game should stop
-                	if (numHops == 1)
-                	{
-                		//printf("Debug: FINISHED... hops=%d len=%d\n", numHops, len);
-                		printf("I'm it\n");
-                		FD_CLR(sLeft, &readset);
-                		close(sLeft);
-						sendPotato(&potato, s);
-                	}
-                	// Send potato to neighbor randomly
-                	else if (rand()%2 == 1)
-                	{
-                		printf("Sending potato to %d\n", getLeftPlayer(iPlayer, numPlayers));
-                		sendPotato(&potato, sLeft);
-                	}
-                	else
-                	{
-               			printf("Sending potato to %d\n", getRightPlayer(iPlayer, numPlayers));
-                		sendPotato(&potato, sRight);
-                	}
-                }
-            }
-            else if (FD_ISSET(sLeft, &tempset))
-            {
-            	// received potato from player on left
-                //printf("Debug: received potato from left\n");
-                memset(&potato, '\0', BUF_SIZE);
-                setSocketBlockingEnabled(sLeft, 0);
-                int totalLen = 0;
-                
-                while (1)
-                {
-                	int err;
-                	memset(&buf, '\0', LEN);
-                	len = recv(sLeft, buf, LEN-1, 0);
-                	err = errno; // save off errno
-                	//printf("Debug: recv = %d", len);
-                	if ( len < 0 ) {
-                		if (( err == EAGAIN ) || (err == EWOULDBLOCK)) { // No more data
-                			//printf("Debug: EWOULDBLOCK\n");
-                			potato[totalLen] = iPlayer;
-                			potato[totalLen+1] = '\0';
-                			//printf("Trace of potato: ");
-                			//for (i=0; i<totalLen; i++) {
-                			//	memset(&buf, '\0', LEN);
-                			//	sprintf(buf, "%d", potato[i]);
-                			//	printf("%s", buf);
-                			//}
-                			//printf(" len[%d]\n", totalLen);
-                			// Check to see if the game should stop
-                			if (totalLen > numHops-2)
-                			{
-                				//printf("Debug: FINISHED... hops=%d len=%d\n", numHops, len);
-                				printf("I'm it\n");
-                				FD_CLR(sLeft, &readset);
-                				close(sLeft);
-								sendPotato(&potato, s);
-                			}
-                			// Send potato to neighbor randomly
-                			else if (rand()%2 == 1)
-                			{
-                				printf("Sending potato to %d\n", getLeftPlayer(iPlayer, numPlayers));
-                				sendPotato(&potato, sLeft);
-                			}
-                			else
-                			{
-                				printf("Sending potato to %d\n", getRightPlayer(iPlayer, numPlayers));
-                				sendPotato(&potato, sRight);
-                			}
-                			break;//
-                		}//
-                    	perror("recv");
-                    	exit(1);
-                	}
-                	else if (len == 0) {
-                		// We got a close
-                		//printf("Debug: Close from left\n");
-                		FD_CLR(sLeft, &readset);
-                		close(sLeft);
-                		break;
-                	}
-                	else {
-                		memcpy(&potato[totalLen], &buf, len);
-                		totalLen += len;
-                		//printf(" len[%d]\n", totalLen);
-                	}
-                } // while
-            }
-            else if (FD_ISSET(sRight, &tempset))
-            {
-            	// received potato from player on right
-                //printf("Debug: received potato from right\n");
-                memset(&potato, '\0', BUF_SIZE);
-                setSocketBlockingEnabled(sRight, 0);
-                int totalLen = 0;
-                
-                while (1)
-                {
-                	int err;
-               		memset(&buf, '\0', LEN);
-                	len = recv(sRight, buf, LEN-1, 0);
-                	err = errno; // save off errno
-                	//printf("Debug: recv = %d", len);
-                	if ( len < 0 ) {
-                		if (( err == EAGAIN ) || (err == EWOULDBLOCK)) { // No more data
-                			//printf("Debug: EWOULDBLOCK\n");
-                			potato[totalLen] = iPlayer;
-                			potato[totalLen+1] = '\0';
-                			//printf("Trace of potato: ");
-                			//for (i=0; i<totalLen; i++) {
-                			//	memset(&buf, '\0', LEN);
-                			//	sprintf(buf, "%d", potato[i]);
-                			//	printf("%s", buf);
-                			//}
-                			//printf(" len[%d]\n", totalLen);
-                			// Check to see if the game should stop
-                			if (totalLen > numHops-2)
-                			{
-                				//printf("Debug: FINISHED... hops=%d len=%d\n", numHops, len);
-                				printf("I'm it\n");
-                				FD_CLR(sLeft, &readset);
-                				close(sLeft);
-								sendPotato(&potato, s);
-                			}
-                			// Send potato to neighbor randomly
-                			else if (rand()%2 == 1)
-                			{
-                				printf("Sending potato to %d\n", getLeftPlayer(iPlayer, numPlayers));
-                				sendPotato(&potato, sLeft);
-                			}
-                			else
-                			{
-                				printf("Sending potato to %d\n", getRightPlayer(iPlayer, numPlayers));
-                				sendPotato(&potato, sRight);
-                			}
-                			break;
-                		}
-                    	perror("recv");
-                    	exit(1);
-                	}
-                	else if (len == 0) {
-                		// We got a close
-                		//printf("Debug: Close from right\n");
-                		FD_CLR(sRight, &readset);
-                		close(sRight);
-                		break;
-                	}
-                	else {
-                		memcpy(&potato[totalLen], &buf, len);
-                		totalLen += len;
-                		//printf(" len[%d]\n", totalLen);
-                	}
-                } // while
-            }
-            else {
-            	//printf("Debug: ERROR - received from fd %d", result);
-            }
-        }
-        setSocketBlockingEnabled(sLeft, 1);//
-    } while(1);
-*/
 }
