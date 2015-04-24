@@ -1,0 +1,2 @@
+This is my sample RFC numbered 456 that both clients have a copy of.
+It should be sent in it's entirety to the client requesting it!

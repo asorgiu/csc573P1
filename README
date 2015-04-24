@@ -1,0 +1,12 @@
+First run make in this directory, then cd to client2 and run make there.
+
+Start the Server first by running the 'server' executable with no parameters. It will echo out the hostname it is running on.
+
+Next, start the client that is in this same directory by running the 'client' executable with one parameter (the hostname of the server). The client will connect to the server and send the server information about itself to register. It will then send several P2S commands, including intentional failure cases and print out what it sends and receives accordingly. NOTE: You will see that this client actually asks itself on it’s own server port for RFC123. It serves it to itself :) Client2 also asks for this RFC from the first client and gets it from the first client.
+
+Next, take client2 and run it on another machine, also passing one parameter (the hostname of the server). Client2 will do the same thing as the first client, but it will also connect to the server process of the first client and send the download request for RFC123.txt. RFC123.txt should be in the same directory as where the first client was run (i.e. as provided).
+
+On that note, it will be easier to copy the complete folder structure as is to each machine, and just run the server and clients from the directories they are in.
+
+
+Once each client has completed and gone through all the commands, you can verify the output in each terminal window. You can Ctrl-C each client and see that the server detects the client disconnect and unregisters the client and removes all references to that client’s RFCs from the RFC list on the Server.

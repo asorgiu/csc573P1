@@ -1,6 +1,6 @@
 /******************************************************************************
  *
- *  File Name........: client.c
+ *  File Name........: client2.c
  *
  *  Description......:
  *	When a peer wishes to join the system, it first instantiates an upload server 
@@ -353,11 +353,11 @@ void callServerCommands(int serverSocket, int port)
 	DEBUG("\n------------------------------------\n");
 	DEBUG("Sending valid ADD command\n");
 	char addCommand[BUF_SIZE];
-	strcpy(addCommand, "ADD RFC 123 P2P-CI/1.0\n\rHost: ");
+	strcpy(addCommand, "ADD RFC 234 P2P-CI/1.0\n\rHost: ");
 	strcat(addCommand, myHostname);
 	strcat(addCommand, "\n\rPort: ");
 	strcat(addCommand, portStr);
-	strcat(addCommand, "\n\rTitle: A test rfc\n\r\n\r");
+	strcat(addCommand, "\n\rTitle: A client2 test rfc\n\r\n\r");
 	
 	len = send(serverSocket, addCommand, strlen(addCommand), 0);
 	if (len != strlen(addCommand)) {

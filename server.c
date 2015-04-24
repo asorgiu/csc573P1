@@ -44,8 +44,8 @@ Each item of the linked list representing the index of RFCs contains these eleme
 #include <fcntl.h>
 #include <string.h>
 
-#define DEBUG printf
-//#define DEBUG //
+//#define DEBUG printf
+#define DEBUG //
 
 #define LEN 200
 #define MAX_MSG_SIZE 2000
@@ -88,7 +88,7 @@ int maxfd;                    // highest number socket for 'select'
 struct peerList* createPeerList(peer* item)
 {
 	DEBUG("createPeerList()\n");
-    printf("   creating list with headnode [%s]\n",item->hostname);
+    DEBUG("   creating list with headnode [%s]\n",item->hostname);
     struct peerList *ptr = (struct peerList*)malloc(sizeof(struct peerList));
     if(ptr == NULL)
     {
@@ -104,7 +104,7 @@ struct peerList* createPeerList(peer* item)
 struct rfcList* createRfcList(rfc* item)
 {
 	DEBUG("createRfcList()\n");
-    printf("   creating list with headnode as [%d]\n",item->number);
+    DEBUG("   creating list with headnode as [%d]\n",item->number);
     struct rfcList *ptr = (struct rfcList*)malloc(sizeof(struct rfcList));
     if(ptr == NULL)
     {
@@ -121,6 +121,10 @@ struct rfcList* createRfcList(rfc* item)
 struct peerList* addToPeerList(peer* item)
 {
 	DEBUG("addToPeerList()\n");
+	printf("\n=========================\n");
+	printf("New Peer connected!\n   Host:%s\n   Port:%d\n", item->hostname, item->port);
+	printf("==========================\n");
+	
     if(peerHead == NULL)
     {
         return (createPeerList(item));
@@ -244,7 +248,7 @@ struct rfcList* searchPeerInRfcList(char* host, rfcList** prev)
     bool found = false;
     DEBUG("searchPeerInRfcList()\n");
 
-    printf("Searching the list for value [%s] \n", host);
+    DEBUG("Searching the list for value [%s] \n", host);
 
     while(ptr != NULL)
     {
@@ -280,7 +284,7 @@ struct peerList* findPeerBySocket(int peerSocket)
     bool found = false;
     DEBUG("findPeerBySocket()\n");
 
-    printf("Searching the peer list for socket [%d] \n", peerSocket);
+    DEBUG("Searching the peer list for socket [%d] \n", peerSocket);
 
     while(ptr != NULL)
     {
@@ -311,7 +315,7 @@ int deleteFromPeerList(char* host)
     struct peerList *del = NULL;
     DEBUG("deleteFromPeerList()\n");
 
-    printf("   Deleting value [%s] from list\n", host);
+    DEBUG("   Deleting value [%s] from list\n", host);
 
     del = searchInPeerList(host, &prev);
     if(del == NULL)
@@ -354,7 +358,7 @@ int deletePeerFromRfcList(char* host)
     bool found = false;
     DEBUG("deletePeerFromRfcList()\n");
 
-    printf("   Deleting all values [%s] from list\n", host);
+    printf("   Deleting all values [%s] from RFC list\n", host);
 
     del = searchPeerInRfcList(host, &prev);
     while (del != NULL)
@@ -408,35 +412,13 @@ int setSocketBlockingEnabled(int fd, int blocking)
 	return (fcntl(fd, F_SETFL, flags) == 0) ? 1 : 0;
 }
 
-/*void closeAllSockets(int s, playerInfo playerData[], int numPlayers) {
-    char str[LEN];
-	int len;
-	DEBUG("closeAllSockets()\n");
-    if (&playerData[0] != NULL) {
-        int i;
-        for (i=0; i<numPlayers; i++) {
-            // Send player the STOP message
-        	memset(&str, 0, sizeof(str));
-        	str[0] = 'S';
-        	len = send(playerData[i].playerSocket, "S", 1, MSG_NOSIGNAL);
-        	if ( len != strlen(str) ) {
-        	    perror("send");
-    	        exit(1);
-	        }
-			// Close player's socket
-			//printf("Debug: Closing socket for player %d\n", i);
-            close(playerData[i].playerSocket);
-        }
-        close(s);
-    }
-}*/
 
 void handleClientDisconnect(int clientNum)
 {
 	struct peerList *tmpList;
 	DEBUG("handleClientDisconnect()\n");
 	
-	tmpList = findPeerBySocket(clientNum);
+	tmpList = findPeerBySocket(clientList[clientNum]);
 	if (tmpList != NULL) {
 		// Delete all of the disconnected peer's rfc data
 		deletePeerFromRfcList(tmpList->item->hostname);
@@ -446,6 +428,7 @@ void handleClientDisconnect(int clientNum)
 		close(clientList[clientNum]);
 		// And remove it from the client list
 		clientList[clientNum] = 0;
+		printf("Client %d has disconnected\n", clientNum);
 	}
 	else {
 		printf("   ERROR: Client not found!\n");
@@ -550,6 +533,7 @@ void send400(int clientNum) {
 	DEBUG("send400()\n");
 	char message[] = "P2P-CI/1.0 400 Bad Request\r\n\r\n";
 	
+	printf("\nSending 400 message:\n%s\n", message);
 	send(clientList[clientNum], message, strlen(message), 0);
 }
 
@@ -557,6 +541,7 @@ void send404(int clientNum) {
 	DEBUG("send404()\n");
 	char message[] = "P2P-CI/1.0 404 P2P-CI Not Found\r\n\r\n";
 	
+	printf("\nSending 404 message:\n%s\n", message);
 	send(clientList[clientNum], message, strlen(message), 0);
 }
 
@@ -564,6 +549,7 @@ void send505(int clientNum) {
 	DEBUG("send505()\n");
 	char message[] = "P2P-CI/1.0 505 P2P-CI Version Not Supported\r\n\r\n";
 	
+	printf("\nSending 505 message:\n%s\n", message);
 	send(clientList[clientNum], message, strlen(message), 0);
 }
 
@@ -799,6 +785,10 @@ void handleNewClient()
     }
 	newPeer->port = ntohl(ret);
 	DEBUG("   Received port [%d]\n", newPeer->port);
+	
+	// Set socket so we can search for the peer to delete
+	// by the socket that we detected a close on
+	newPeer->socket = newSocket;
 
 	// Send Ack
     len = send(newSocket, str, strlen(str), 0);
@@ -832,7 +822,7 @@ void handleData(int clientNum)
         if ( len < 0 ) {
         	totalLen = 0;
             if (( err == EAGAIN ) || (err == EWOULDBLOCK)) { // No more data
-                printf("   DEBUG: Data received -\n   [%s]\n", data);
+                printf("Received:[%s]\n", data);
                 // Check to see which command was received
                 // Valid methods: ADD, LOOKUP, LIST
                 if (data[0] == 'A' && data[1] == 'D' && data[2] == 'D') {
@@ -842,7 +832,8 @@ void handleData(int clientNum)
                 } else if (data[0] == 'L' && data[1] == 'I' && data[2] == 'S') {
                 	list(&data, clientNum);
                 } else {
-                	printf("   ERROR: Invalid command - %s\n", data);
+                	printf("   ERROR: Invalid command:\n%s\n", data);
+                	send400(clientNum);
                 }
 				return;
             }
@@ -850,7 +841,7 @@ void handleData(int clientNum)
         }
         else if (len == 0) {
             // We got a close
-            printf("   Debug: Close from client %d\n", clientNum);
+            printf("   Close from client %d\n", clientNum);
             handleClientDisconnect(clientNum);
             break;
         }
@@ -881,7 +872,7 @@ void handleSocketRead() {
 	}		
 }
 
-main (int argc, void *argv[])
+main (int argc, char *argv[])
 {
     char buf[LEN];
     char host[LEN];
@@ -901,7 +892,7 @@ main (int argc, void *argv[])
     /* fill in hostent struct for self */
     gethostname(host, sizeof(host));
     hp = gethostbyname(host);
-    DEBUG("Hostname: %s\n", host);
+    printf("Hostname: %s\n", host);
     if ( hp == NULL ) {
         fprintf(stderr, "%s: host not found (%s)\n", argv[0], host);
         exit(1);
@@ -953,7 +944,7 @@ main (int argc, void *argv[])
     }
     
     maxfd = listenSocket; // Only one so far
-    memset((char *)&clientList, 0, sizeof(clientList));
+
     
     /* accept connections and handle data */
     int i, j;

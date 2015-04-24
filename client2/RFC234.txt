@@ -1,2 +1,2 @@
-This is my sample RFC numbered 123 for CSC573.
+This is my sample RFC numbered 234 that client2 has.
 It should be sent in it's entirety to the client requesting it!
