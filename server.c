@@ -1,6 +1,7 @@
 /******************************************************************************
  *
  *  File Name........: server.c
+ *  Copyright 2015, Aaron Sorgius, All rights reserved.
  *
  *  Description......:
  *  The server waits for connections from the peers on the well-known port 7734. The server maintains two data structures: a list with information about the 

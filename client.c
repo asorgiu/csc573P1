@@ -1,6 +1,7 @@
 /******************************************************************************
  *
  *  File Name........: client.c
+ *  Copyright 2015, Aaron Sorgius, All rights reserved.
  *
  *  Description......:
  *	When a peer wishes to join the system, it first instantiates an upload server 
